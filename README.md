@@ -279,3 +279,4 @@ dns_server/
 - **DNS-over-TLS (DoT)** — port 853
 - **Metryki** — Prometheus endpoint ze statystykami cache, zapytań, peerów
 - **Dynamiczne aktualizacje** — RFC 2136 (TSIG-signed UPDATE)
+# EasyDNS
