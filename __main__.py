@@ -147,8 +147,15 @@ def main() -> None:
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
-        print(f"Błąd: plik konfiguracyjny '{args.config}' nie istnieje.",
-              file=sys.stderr)
+        # Podpowiedź: jeśli istnieje config.example, zaproponuj skopiowanie
+        example = os.path.splitext(args.config)[0] + ".example"
+        hint = ""
+        if os.path.exists(example):
+            hint = f"\n  Skopiuj przykładową konfigurację:\n  cp {example} {args.config}"
+        print(
+            f"Błąd: plik konfiguracyjny '{args.config}' nie istnieje.{hint}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     asyncio.run(run(args.config))
