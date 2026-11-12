@@ -91,6 +91,20 @@ class RecursiveResolver:
             return await self._forward(request)
         return await self._iterate(request, qt, ROOT_HINTS, 0)
 
+    async def forward_to(self, request: DNSRecord,
+                         servers: List[Tuple[str, int]]) -> Optional[DNSRecord]:
+        """Przekaż zapytanie do konkretnej listy serwerów (zone forwarder)."""
+        for host, port in servers:
+            reply = await _udp_query(host, port, request)
+            if reply is not None:
+                logger.debug("Zone-forward %s → %s:%d OK (rcode=%s)",
+                             str(request.q.qname), host, port,
+                             reply.header.rcode)
+                return reply
+        logger.warning("Wszystkie serwery zone-forwarder nieosiągalne dla %s",
+                       str(request.q.qname))
+        return None
+
     # ── forwarder ────────────────────────────────────────────────────────────
 
     async def _forward(self, request: DNSRecord) -> Optional[DNSRecord]:

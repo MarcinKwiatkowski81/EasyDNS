@@ -78,7 +78,21 @@ async def run(config_path: str) -> None:
         forwarders=[str(h) for h in cfg.get("forwarders", [])]
     )
 
-    resolver = Resolver(zones=zones, cache=cache, acl=acl, recursive=recursive)
+    # forward_zones: opcjonalne przekierowanie konkretnych stref do wskazanych serwerów
+    # Przykład w config.yaml:
+    #   forward_zones:
+    #     "bb.mkw.": ["192.168.32.16"]
+    #     "krk.mkw.": ["192.168.16.16"]
+    fwd_cfg = cfg.get("forward_zones", {})
+    forward_zones = {
+        zone: [str(s) for s in servers]
+        for zone, servers in fwd_cfg.items()
+    } if fwd_cfg else {}
+
+    resolver = Resolver(
+        zones=zones, cache=cache, acl=acl,
+        recursive=recursive, forward_zones=forward_zones,
+    )
 
     # 5. P2P
     peers_cfg     = cfg.get("peers", [])

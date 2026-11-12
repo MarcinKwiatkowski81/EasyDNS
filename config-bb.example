@@ -1,0 +1,208 @@
+# ============================================================
+#  DNS — węzeł Bielsko-Biała (bb)
+#  Lokalizacja: Bielsko-Biała
+#  Rola: strefa bb.mkw. (autorytatywna)
+#        forward mkw. / hub.mkw. → hub VPN
+#        forward krk.mkw.        → Kraków (bezpośrednio, bez przechodzenia przez hub)
+#
+#  Interfejsy:
+#    192.168.10.6  — koniec tunelu do centrum (tun-hub)
+#    192.168.32.16 — adres LAN serwera DNS
+#
+#  Uruchomienie:
+#    cp config-bb.example config.yaml
+#    sudo python3 -m dns_server -c config.yaml
+# ============================================================
+
+server:
+  id: "ns-bb"
+  listen: "0.0.0.0"
+  port: 53
+  tcp: true
+  udp: true
+
+# Bielsko nie replikuje przez P2P — jest właścicielem swojej strefy
+peers: []
+peer_listen:
+  host: "0.0.0.0"
+  port: 5353
+
+# Ogólny forwarder dla ruchu internetowego — przez hub VPN
+forwarders:
+  - "192.168.10.5"      # hub end of bb tunnel (odpyta hub, hub fowarduje do 8.8.8.8)
+  - "8.8.8.8"           # fallback bezpośredni (jeśli hub niedostępny)
+
+# ── Conditional forwarding ───────────────────────────────────────────────────
+forward_zones:
+  "mkw.":
+    - "192.168.10.5"    # hub (strefa root)
+  "hub.mkw.":
+    - "192.168.10.5"    # hub
+  "krk.mkw.":
+    - "192.168.16.16"   # ns0.krk.mkw bezpośrednio przez VPN (jeśli hub padnie, krk dalej działa)
+    - "192.168.10.1"    # fallback: hub (który forwarduje do krk)
+  "10.168.192.in-addr.arpa.":
+    - "192.168.10.5"    # reverse VPN → hub
+  "16.168.192.in-addr.arpa.":
+    - "192.168.16.16"   # reverse Kraków → ns0.krk.mkw
+
+cache:
+  enabled: true
+  max_size: 5000
+  min_ttl: 30
+
+state_file: "state-bb.yaml"
+
+# ── ACL ──────────────────────────────────────────────────────────────────────
+acl:
+  - name: "localhost"
+    match: ["127.0.0.0/8", "::1/128"]
+    allow: ["read", "write", "peer"]
+
+  - name: "lan-bielsko"
+    match: ["192.168.32.0/24"]
+    allow: ["read"]
+
+  - name: "vpn-hub"                  # hub może odpytywać Bielsko (forward_zones)
+    match: ["192.168.10.4/30"]       # 192.168.10.4–7 (tunel bb)
+    allow: ["read"]
+
+  - name: "default"
+    match: ["0.0.0.0/0", "::/0"]
+    allow: []
+
+# ── Strefy lokalne (autorytatywne w Bielsku) ──────────────────────────────────
+zones:
+
+  # ════════════════════════════════════════════════════════════
+  #  bb.mkw.  — strefa Bielsko-Biała
+  #  LAN: 192.168.32.0/24  |  DHCP: .100–.150
+  # ════════════════════════════════════════════════════════════
+  - name: "bb.mkw"
+    records:
+
+      - name: "@"
+        type: SOA
+        ttl: 3600
+        mname:   "ns0.bb.mkw"
+        rname:   "admin.mkw"
+        serial:  2024010101
+        refresh: 3600
+        retry:   900
+        expire:  604800
+        minimum: 300
+
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "ns0.bb.mkw"
+
+      # ── Interfejs tunelowy ────────────────────────────────
+      - name: "tun-hub"
+        type: A
+        ttl: 3600
+        value: "192.168.10.6"
+
+      - name: "to-hub"              # alias oryginalny
+        type: CNAME
+        ttl: 3600
+        value: "tun-hub.bb.mkw"
+
+      # ── Infrastruktura LAN ────────────────────────────────
+      - name: "gw0"
+        type: A
+        ttl: 3600
+        value: "192.168.32.1"
+
+      - name: "ap0"
+        type: A
+        ttl: 3600
+        value: "192.168.32.2"
+
+      - name: "sw0"
+        type: A
+        ttl: 3600
+        value: "192.168.32.3"
+
+      - name: "dsk0"
+        type: A
+        ttl: 3600
+        value: "192.168.32.5"
+
+      - name: "ns0"
+        type: A
+        ttl: 3600
+        value: "192.168.32.16"
+
+      # ── Aliasy wygodne (bez cyfry) ────────────────────────
+      - name: "gw"
+        type: CNAME
+        ttl: 3600
+        value: "gw0.bb.mkw"
+
+      - name: "ns"
+        type: CNAME
+        ttl: 3600
+        value: "ns0.bb.mkw"
+
+      - name: "ap"
+        type: CNAME
+        ttl: 3600
+        value: "ap0.bb.mkw"
+
+      - name: "dsk-bb0"             # alias oryginalny
+        type: CNAME
+        ttl: 3600
+        value: "dsk0.bb.mkw"
+
+
+  # ════════════════════════════════════════════════════════════
+  #  32.168.192.in-addr.arpa  — reverse LAN Bielsko
+  # ════════════════════════════════════════════════════════════
+  - name: "32.168.192.in-addr.arpa"
+    records:
+
+      - name: "@"
+        type: SOA
+        ttl: 3600
+        mname:   "ns0.bb.mkw"
+        rname:   "admin.mkw"
+        serial:  2024010101
+        refresh: 3600
+        retry:   900
+        expire:  604800
+        minimum: 300
+
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "ns0.bb.mkw"
+
+      - name: "1"
+        type: PTR
+        ttl: 3600
+        value: "gw0.bb.mkw"
+
+      - name: "2"
+        type: PTR
+        ttl: 3600
+        value: "ap0.bb.mkw"
+
+      - name: "3"
+        type: PTR
+        ttl: 3600
+        value: "sw0.bb.mkw"
+
+      - name: "5"
+        type: PTR
+        ttl: 3600
+        value: "dsk0.bb.mkw"
+
+      - name: "16"
+        type: PTR
+        ttl: 3600
+        value: "ns0.bb.mkw"
+
+logging:
+  level: "INFO"
+  file: ""

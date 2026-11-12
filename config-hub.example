@@ -1,0 +1,249 @@
+# ============================================================
+#  DNS — węzeł centralny (hub)
+#  Lokalizacja: serwer VPN
+#  Rola: strefa root mkw. + hub.mkw. + reverse VPN
+#        conditional forward bb.mkw. → Bielsko
+#        conditional forward krk.mkw. → Kraków
+#
+#  Interfejsy VPN:
+#    192.168.10.1  — koniec tunelu do Krakowa
+#    192.168.10.5  — koniec tunelu do Bielska
+#    192.168.10.65 — koniec tunelu dla laptopów
+#
+#  Uruchomienie:
+#    cp config-hub.example config.yaml
+#    sudo python3 -m dns_server -c config.yaml
+# ============================================================
+
+server:
+  id: "ns-hub"
+  listen: "0.0.0.0"
+  port: 53
+  tcp: true
+  udp: true
+
+# Hub nie uczestniczy w P2P — jest autorytetem, nie replikuje
+peers: []
+peer_listen:
+  host: "0.0.0.0"
+  port: 5353
+
+# Internet — ogólny forwarder (gdy zapytanie nie trafia do żadnej lokalnej/zone strefy)
+forwarders:
+  - "8.8.8.8"
+  - "1.1.1.1"
+
+# ── Conditional forwarding ───────────────────────────────────────────────────
+# Zapytania o bb.mkw. → Bielsko DNS, o krk.mkw. → Kraków DNS
+# Hub zwraca pełną odpowiedź (nie tylko referral), bo sam odpytuje właściwy serwer.
+forward_zones:
+  "bb.mkw.":
+    - "192.168.32.16"       # ns0.bb.mkw (via tunel VPN 192.168.10.5→192.168.10.6)
+  "krk.mkw.":
+    - "192.168.16.16"       # ns0.krk.mkw (via tunel VPN 192.168.10.1→192.168.10.2)
+  "32.168.192.in-addr.arpa.":
+    - "192.168.32.16"       # reverse Bielsko
+  "16.168.192.in-addr.arpa.":
+    - "192.168.16.16"       # reverse Kraków
+
+cache:
+  enabled: true
+  max_size: 10000
+  min_ttl: 30
+
+state_file: "state-hub.yaml"
+
+# ── ACL ──────────────────────────────────────────────────────────────────────
+acl:
+  - name: "localhost"
+    match: ["127.0.0.0/8", "::1/128"]
+    allow: ["read", "write", "peer"]
+
+  - name: "vpn-tunel-krk"           # Kraków → hub (10.2 pyta 10.1)
+    match: ["192.168.10.0/26"]
+    allow: ["read"]
+
+  - name: "vpn-tunel-bb"            # Bielsko → hub (10.6 pyta 10.5)
+    match: ["192.168.10.4/30"]
+    allow: ["read"]
+
+  - name: "vpn-tunel-laptopy"
+    match: ["192.168.10.64/26"]
+    allow: ["read"]
+
+  - name: "default"
+    match: ["0.0.0.0/0", "::/0"]
+    allow: []
+
+# ── Strefy lokalnych (autorytatywne na hubie) ─────────────────────────────────
+zones:
+
+  # ════════════════════════════════════════════════════════════
+  #  mkw.  — domena root
+  #  Deleguje bb.mkw. → ns0.bb.mkw i krk.mkw. → ns0.krk.mkw
+  # ════════════════════════════════════════════════════════════
+  - name: "mkw"
+    records:
+
+      - name: "@"
+        type: SOA
+        ttl: 3600
+        mname:   "ns0.hub.mkw"
+        rname:   "admin.mkw"
+        serial:  2024010101
+        refresh: 3600
+        retry:   900
+        expire:  604800
+        minimum: 300
+
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "ns0.hub.mkw"
+
+      # ── Delegacja bb.mkw. → Bielsko ───────────────────────
+      # NS dla podstrefy + glue records (A serwerów NS)
+      - name: "bb"
+        type: NS
+        ttl: 3600
+        value: "ns0.bb.mkw"
+
+      - name: "ns0.bb"
+        type: A
+        ttl: 3600
+        value: "192.168.32.16"
+
+      # ── Delegacja krk.mkw. → Kraków ───────────────────────
+      - name: "krk"
+        type: NS
+        ttl: 3600
+        value: "ns0.krk.mkw"
+
+      - name: "ns0.krk"
+        type: A
+        ttl: 3600
+        value: "192.168.16.16"
+
+      # ── Glue dla hub NS ───────────────────────────────────
+      - name: "ns0.hub"
+        type: A
+        ttl: 3600
+        value: "192.168.10.1"       # adres dostępny z Krakowa; dostosuj wg potrzeb
+
+
+  # ════════════════════════════════════════════════════════════
+  #  hub.mkw.  — centrum / serwer VPN
+  #  Sieć tunelowa: 192.168.10.0/24
+  # ════════════════════════════════════════════════════════════
+  - name: "hub.mkw"
+    records:
+
+      - name: "@"
+        type: SOA
+        ttl: 3600
+        mname:   "ns0.hub.mkw"
+        rname:   "admin.mkw"
+        serial:  2024010101
+        refresh: 3600
+        retry:   900
+        expire:  604800
+        minimum: 300
+
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "ns0.hub.mkw"
+
+      # ── Koniec tuneli po stronie centrum ──────────────────
+      - name: "ns0"
+        type: A
+        ttl: 3600
+        value: "192.168.10.1"       # główny IP huba widoczny z sieci VPN
+
+      - name: "tun-krk"
+        type: A
+        ttl: 3600
+        value: "192.168.10.1"
+
+      - name: "tun-bb"
+        type: A
+        ttl: 3600
+        value: "192.168.10.5"
+
+      - name: "tun-lap"
+        type: A
+        ttl: 3600
+        value: "192.168.10.65"
+
+      # Aliasy oryginalne (kompatybilność wsteczna)
+      - name: "to-krakow"
+        type: CNAME
+        ttl: 3600
+        value: "tun-krk.hub.mkw"
+
+      - name: "to-bielsko"
+        type: CNAME
+        ttl: 3600
+        value: "tun-bb.hub.mkw"
+
+      - name: "to-laptops"
+        type: CNAME
+        ttl: 3600
+        value: "tun-lap.hub.mkw"
+
+
+  # ════════════════════════════════════════════════════════════
+  #  10.168.192.in-addr.arpa  — reverse VPN
+  # ════════════════════════════════════════════════════════════
+  - name: "10.168.192.in-addr.arpa"
+    records:
+
+      - name: "@"
+        type: SOA
+        ttl: 3600
+        mname:   "ns0.hub.mkw"
+        rname:   "admin.mkw"
+        serial:  2024010101
+        refresh: 3600
+        retry:   900
+        expire:  604800
+        minimum: 300
+
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "ns0.hub.mkw"
+
+      - name: "1"
+        type: PTR
+        ttl: 3600
+        value: "tun-krk.hub.mkw"
+
+      - name: "2"
+        type: PTR
+        ttl: 3600
+        value: "tun-hub.krk.mkw"
+
+      - name: "5"
+        type: PTR
+        ttl: 3600
+        value: "tun-bb.hub.mkw"
+
+      - name: "6"
+        type: PTR
+        ttl: 3600
+        value: "tun-hub.bb.mkw"
+
+      - name: "16"
+        type: PTR
+        ttl: 3600
+        value: "ns0.bb.mkw"
+
+      - name: "65"
+        type: PTR
+        ttl: 3600
+        value: "tun-lap.hub.mkw"
+
+logging:
+  level: "INFO"
+  file: ""

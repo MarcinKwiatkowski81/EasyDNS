@@ -5,12 +5,25 @@ Kolejność rozwiązywania:
   1. ACL — czy klient ma uprawnienie 'read'?
   2. Cache — czy mamy świeżą odpowiedź?
   3. Strefy lokalne — czy jesteśmy autorytatywni?
-     a. Znana nazwa, znany typ  → ANSWER
-     b. Znana nazwa, brak typu  → NOERROR + SOA w AUTHORITY
-     c. Nieznana nazwa w strefie → NXDOMAIN + SOA w AUTHORITY
-     d. CNAME → rozwiń łańcuch (możliwe wyjście poza strefę)
-  4. Resolver rekurencyjny / forwarder
-  5. Zapisz wynik w cache
+     a. Wykryj delegację (zone cut) → referral lub zone forwarder
+     b. Znana nazwa, znany typ  → ANSWER
+     c. Znana nazwa, brak typu  → NOERROR + SOA w AUTHORITY
+     d. Nieznana nazwa w strefie → NXDOMAIN + SOA w AUTHORITY
+     e. CNAME → rozwiń łańcuch (możliwe wyjście poza strefę)
+  4. Conditional zone forwarder — zapytania o delegowane subdomeny
+  5. Resolver rekurencyjny / forwarder
+  6. Zapisz wynik w cache
+
+Delegacja (zone cut):
+  Jeśli strefa lokalna zawiera rekordy NS dla podstrefy, a zapytanie trafia
+  do tej podstrefy, resolver zwraca referral (NOERROR, NS w AUTHORITY,
+  glue A/AAAA w ADDITIONAL) lub — jeśli skonfigurowany forward_zones —
+  odpytuje konkretny serwer i zwraca pełną odpowiedź.
+
+Conditional forwarding (forward_zones):
+  Pozwala skierować zapytania o konkretną strefę do wskazanych serwerów
+  zamiast do ogólnych forwarderów. Niezbędne w architekturze hierarchicznej,
+  gdzie każda lokalizacja jest autorytatywna dla swojej subdomeny.
 
 Budowanie odpowiedzi DNS opiera się na dnslib.
 """
@@ -109,11 +122,21 @@ class Resolver:
                  zones: ZoneStore,
                  cache: Cache,
                  acl: Acl,
-                 recursive: RecursiveResolver):
+                 recursive: RecursiveResolver,
+                 forward_zones: Optional[dict] = None):
         self.zones = zones
         self.cache = cache
         self.acl = acl
         self.recursive = recursive
+        # forward_zones: {"bb.mkw.": ["192.168.32.16"], ...}
+        # Klucze zawsze normalizowane (lowercase, kropka na końcu).
+        self._fwd_zones: dict = {}
+        for zone_name, servers in (forward_zones or {}).items():
+            norm = zone_name.lower().rstrip(".") + "."
+            self._fwd_zones[norm] = [
+                (s.split(":")[0], int(s.split(":")[1]) if ":" in s else 53)
+                for s in (servers or [])
+            ]
 
     # ── publiczne API ────────────────────────────────────────────────────────
 
@@ -158,23 +181,48 @@ class Resolver:
         # 3. Strefy lokalne
         zone = self.zones.get_zone(qname)
         if zone is not None:
+            # 3a. Wykryj zone cut (delegację do podstrefy)
+            delegation = self._find_delegation(zone, qname)
+            if delegation is not None:
+                ns_recs, glue_recs = delegation
+                # Jeśli mamy zone forwarder — użyj go (pełna odpowiedź)
+                fwd = self._zone_forwarder(qname)
+                if fwd:
+                    upstream = await self.recursive.forward_to(request, fwd)
+                    if upstream is not None:
+                        self._copy_upstream(reply, upstream)
+                        self._cache_if_ok(qname, qtype, upstream)
+                        return reply
+                # Brak zone forwardera → standardowy referral DNS
+                reply.header.aa = 0
+                self._add_records(reply.auth, ns_recs, zone)
+                self._add_records(reply.ar,   glue_recs, zone)
+                logger.debug("REFERRAL %s → %s",
+                             qname, [r.rdata.get("value") for r in ns_recs])
+                return reply
+
+            # 3b. Odpowiedź autorytatywna ze strefy lokalnej
             answered = self._answer_from_zone(reply, zone, qname, qtype)
             if answered and reply.rr:
                 min_ttl = min((r.ttl for r in reply.rr), default=60)
                 self.cache.set(qname, qtype, list(reply.rr), min_ttl)
             return reply
 
-        # 4. Resolver rekurencyjny
+        # 4. Conditional zone forwarder (nazwa spoza stref lokalnych)
+        fwd = self._zone_forwarder(qname)
+        if fwd:
+            upstream = await self.recursive.forward_to(request, fwd)
+            if upstream is not None:
+                self._copy_upstream(reply, upstream)
+                self._cache_if_ok(qname, qtype, upstream)
+                return reply
+
+        # 5. Ogólny resolver rekurencyjny / forwarder
         try:
             upstream = await self.recursive.resolve(qname, qtype)
             if upstream is not None:
-                reply.rr = upstream.rr
-                reply.auth = upstream.auth
-                reply.ar = upstream.ar
-                reply.header.rcode = upstream.header.rcode
-                if upstream.rr:
-                    min_ttl = min((r.ttl for r in upstream.rr), default=60)
-                    self.cache.set(qname, qtype, list(upstream.rr), min_ttl)
+                self._copy_upstream(reply, upstream)
+                self._cache_if_ok(qname, qtype, upstream)
                 return reply
         except Exception as exc:
             logger.error("Recursive resolver error dla %s: %s", qname, exc)
@@ -225,6 +273,73 @@ class Resolver:
         reply.header.rcode = RCODE.NXDOMAIN
         self._add_soa_to_authority(reply, zone)
         return True
+
+    # ── delegacja i conditional forwarding ──────────────────────────────────────
+
+    def _find_delegation(self, zone: Zone,
+                         qname: str) -> Optional[Tuple[List, List]]:
+        """
+        Wykryj zone cut: czy qname leży pod delegowaną podstrefą?
+
+        Algorytm:
+          Dla qname = "dsk0.bb.mkw." w strefie "mkw.":
+            rel = "dsk0.bb"
+            Sprawdź od strony apeksu: "bb" → czy są rekordy NS?
+            Jeśli tak → delegacja do bb.mkw., zwróć (ns_recs, glue).
+
+        Nie wykrywa delegacji dla samego apeksu podstrefy
+        (qname=="bb.mkw." → odpowiada strefa nadrzędna, nie referral).
+        """
+        rel = zone._to_relative(qname)
+        if rel is None or rel == "":
+            return None  # apex strefy — brak delegacji
+
+        parts = rel.split(".")
+        # Iteruj od strony apeksu strefy (najpłytszy zone cut pierwszy):
+        # dla parts=['dsk0','bb']: sprawdza 'bb', potem 'dsk0.bb' (pomijamy pełną nazwę)
+        for depth in range(len(parts) - 1, 0, -1):
+            candidate_rel  = ".".join(parts[depth:])
+            candidate_fqdn = zone._to_fqdn(candidate_rel)
+            ns_recs = zone.query(candidate_fqdn, "NS")
+            if not ns_recs:
+                continue
+            # Zbierz glue records (A/AAAA dla serwerów NS w naszej strefie)
+            glue: List[ResourceRecord] = []
+            for ns_rr in ns_recs:
+                ns_target = ns_rr.rdata.get("value", "")
+                glue.extend(zone.query(ns_target, "A"))
+                glue.extend(zone.query(ns_target, "AAAA"))
+            return ns_recs, glue
+        return None
+
+    def _zone_forwarder(self, qname: str) -> Optional[List[Tuple[str, int]]]:
+        """
+        Znajdź najbardziej szczegółowy zone forwarder dla qname.
+        Np. dla qname="dsk0.bb.mkw." zwraca serwery z "bb.mkw." (jeśli skonfigurowane).
+        """
+        name = qname.lower().rstrip(".") + "."
+        best_len, best = 0, None
+        for zone_key, servers in self._fwd_zones.items():
+            if name == zone_key or name.endswith("." + zone_key):
+                if len(zone_key) > best_len:
+                    best_len = len(zone_key)
+                    best = servers
+        return best
+
+    # ── pomocnicze ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _copy_upstream(reply: DNSRecord, upstream: DNSRecord) -> None:
+        reply.rr   = upstream.rr
+        reply.auth = upstream.auth
+        reply.ar   = upstream.ar
+        reply.header.rcode = upstream.header.rcode
+
+    def _cache_if_ok(self, qname: str, qtype: str,
+                     upstream: DNSRecord) -> None:
+        if upstream.rr:
+            min_ttl = min((r.ttl for r in upstream.rr), default=60)
+            self.cache.set(qname, qtype, list(upstream.rr), min_ttl)
 
     @staticmethod
     def _add_records(target: list, recs: List[ResourceRecord],

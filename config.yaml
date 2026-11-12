@@ -22,10 +22,10 @@ peer_listen:
 peers:
   - host: "192.168.1.2"
     port: 5353
-    key: "zmien-na-losowy-klucz-hmac-sha256-min-32-znaki"
+    key: "89b30d708324e957289df3184a50a6a8c4f398cb417a12ab00ad285d18fa08d1"
   - host: "192.168.1.3"
     port: 5353
-    key: "zmien-na-losowy-klucz-hmac-sha256-min-32-znaki"
+    key: "89b30d708324e957289df3184a50a6a8c4f398cb417a12ab00ad285d18fa08d1"
 
 # ── Forwardery (zewnętrzny DNS) ──────────────────────────────
 # Używane gdy zapytanie nie trafia do żadnej lokalnej strefy.
