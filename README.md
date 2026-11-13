@@ -23,11 +23,11 @@ Zależności (`requirements.txt`):
 ## Uruchomienie
 
 ```bash
-# Z domyślnym config.yaml w bieżącym katalogu
+# Z domyślnym /etc/easydns/easydns.yaml
 sudo python -m dns_server
 
-# Z innym plikiem konfiguracyjnym
-sudo python -m dns_server -c /etc/mydns/config.yaml
+# Z lokalną konfiguracją w repozytorium
+sudo python3 -m dns_server -c config.yaml
 ```
 
 Port 53 wymaga uprawnień root (lub `CAP_NET_BIND_SERVICE`).  
@@ -37,6 +37,85 @@ Bez roota: ustaw `port: 5300` i przekieruj ruch przez iptables:
 sudo iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-port 5300
 sudo iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-port 5300
 ```
+
+---
+
+## Pakiet Debian/Ubuntu
+
+Pakiet wymaga systemowego Pythona co najmniej 3.11 (np. Debian 12+
+lub Ubuntu 24.04+). Zależności runtime są instalowane przez APT:
+`python3`, `python3-dnslib`, `python3-yaml` oraz narzędzia obsługi usługi.
+Peering używa HMAC z biblioteki standardowej; pakiet nie wymaga pip.
+
+Budowanie w katalogu repozytorium:
+
+```bash
+sudo apt install build-essential dpkg-dev debhelper dh-python \
+  python3 python3-dnslib python3-yaml
+dpkg-buildpackage -us -uc -b
+sudo apt install ../easydns_0.1.0_all.deb
+```
+
+Pakiet instaluje i włącza `easydns.service`, a przy instalacji próbuje go
+uruchomić. Przed instalacją zatrzymaj poprzednią instancję DNS zajmującą
+port 53. Nie wyłączaj innych usług DNS bez sprawdzenia, czy są potrzebne.
+Domyślna konfiguracja pakietu jest konfiguracją huba dla `mkw.`.
+
+| Ścieżka | Zawartość |
+|---------|-----------|
+| `/usr/sbin/easydns` | Polecenie uruchamiające aplikację |
+| `/usr/lib/easydns/dns_server/` | Moduły Pythona |
+| `/etc/easydns/easydns.yaml` | Domyślna konfiguracja, chroniona przy aktualizacji przez dpkg |
+| `/var/cache/easydns/state.yaml` | Domyślny plik stanu |
+| `/usr/share/doc/easydns/` | Dokumentacja i changelog |
+| `/usr/share/doc/easydns/examples/` | Konfiguracje huba, gałęzi i natywnego peeringu |
+
+Usługa działa jako użytkownik `easydns`, a nie root. Ma wyłącznie
+capability `CAP_NET_BIND_SERVICE` do portu 53. Katalog konfiguracji jest
+czytelny dla grupy `easydns`; plik konfiguracji ma prawa `0640`, co chroni
+również klucze peeringu. Używając własnego pliku konfiguracji, zachowaj
+właściciela `root:easydns` i te same prawa.
+
+Przełączenie na konfigurację BB:
+
+```bash
+sudo systemctl stop easydns
+sudo install -o root -g easydns -m 0640 \
+  /usr/share/doc/easydns/examples/config-bb.example /etc/easydns/easydns.yaml
+sudo systemctl start easydns
+sudo systemctl status easydns
+```
+
+Przykłady hierarchiczne mają względne nazwy stanu, np. `state-bb.yaml`.
+Usługa ma `WorkingDirectory=/var/cache/easydns`, więc zapisuje je w tym
+katalogu. Przy uruchomieniu ręcznym ustaw bezwzględne `state_file` pod
+`/var/cache/easydns`. Bez podania tego klucza aplikacja używa
+`/var/cache/easydns/state.yaml`. Stan jest zapisywany przy prawidłowym
+zatrzymaniu; cache DNS pozostaje w pamięci. Zgodnie z żądaną lokalizacją
+stan jest w katalogu cache, który administrator może wyczyścić.
+
+Logowanie domyślnie używa syslog (`logging.syslog: true`, `/dev/log`),
+a gdy socket syslog nie istnieje, stdout przechwytywanego przez journald:
+
+```bash
+journalctl -u easydns -f
+```
+
+Aby dodatkowo zapisywać log do pliku, ustaw `logging.file` na
+`/var/log/easydns.log`. Pakiet przygotowuje ten plik z prawami do zapisu
+dla usługi i instaluje konfigurację logrotate. Katalog `/etc/easydns` jest
+dla usługi tylko do odczytu; plik stanu musi pozostać w katalogu cache.
+
+Opcjonalny przykład `config-peer.example` pokazuje natywny peering
+HUB–BB na TCP 5353. To osobny wariant, nie rozszerzenie hierarchii mkw:
+replikowane są wszystkie jego strefy. Przed włączeniem wygeneruj własny
+wspólny klucz, ustaw różne `server.id`, wzajemne adresy partnerów i ACL
+zgodne z rzeczywistymi adresami źródłowymi VPN. Nie uruchamiaj go z kluczem
+zastępczym. Zapewnij łączność TCP 5353 w obu kierunkach.
+
+Testy lokalne: `python3 -m unittest discover -s tests -v`.
+Przed publiczną dystrybucją uzupełnij metadane praw autorskich i licencji
+pakietu: repozytorium nie określa obecnie licencji.
 
 ---
 

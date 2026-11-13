@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+
+export PYTHONDONTWRITEBYTECODE = 1
+
+%:
+	dh $@ --with python3
+
+override_dh_auto_build:
+
+override_dh_auto_test:
+	python3 -m unittest discover -s tests -v
+
+override_dh_auto_install:
+	install -d debian/easydns/usr/lib/easydns/dns_server
+	install -m 0644 dns_server/*.py debian/easydns/usr/lib/easydns/dns_server/
+	install -D -m 0755 debian/easydns-launcher debian/easydns/usr/sbin/easydns
+	install -D -m 0644 config-hub.example debian/easydns/etc/easydns/easydns.yaml
+	python3 -c 'from pathlib import Path; import yaml; path = Path("debian/easydns/etc/easydns/easydns.yaml"); config = yaml.safe_load(path.read_text()); config["state_file"] = "/var/cache/easydns/state.yaml"; config["logging"]["syslog"] = True; path.write_text(yaml.safe_dump(config, sort_keys=False))'
+	install -d debian/easydns/usr/share/doc/easydns/examples
+	install -m 0644 config-*.example debian/easydns/usr/share/doc/easydns/examples/
+	install -m 0644 README.md debian/easydns/usr/share/doc/easydns/
+	install -D -m 0644 debian/easydns.8 debian/easydns/usr/share/man/man8/easydns.8
+
+override_dh_python3:
+	dh_python3 /usr/lib/easydns

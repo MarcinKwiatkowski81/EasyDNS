@@ -1,0 +1,32 @@
+.TH EASYDNS 8 "November 2026" "EasyDNS 0.1.0"
+.SH NAME
+easydns \- internal DNS server with optional native peering
+.SH SYNOPSIS
+.B easydns
+.RB [ \-c " configuration" ]
+.SH DESCRIPTION
+EasyDNS serves local zones and forwards other DNS queries to upstream
+servers. Native authenticated peering can replicate zones between nodes.
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " FILE"
+Read YAML configuration from FILE.
+The default is /etc/easydns/easydns.yaml.
+.SH FILES
+.TP
+.I /etc/easydns/easydns.yaml
+Server configuration, preserved across package upgrades.
+.TP
+.I /var/cache/easydns/state.yaml
+Default saved zone state.
+.TP
+.I /usr/share/doc/easydns/examples/
+Example hierarchical and native peering configurations.
+.SH LOGGING
+The packaged configuration uses syslog, falling back to standard output
+when /dev/log is unavailable. The systemd service captures standard
+output in the journal. Set logging.file to /var/log/easydns.log to also
+write a log file.
+.SH SEE ALSO
+.BR systemctl (1),
+.BR journalctl (1)

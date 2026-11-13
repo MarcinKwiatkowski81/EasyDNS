@@ -1,0 +1,33 @@
+[Unit]
+Description=EasyDNS internal DNS server
+Documentation=man:easydns(8)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=easydns
+Group=easydns
+ExecStart=/usr/sbin/easydns --config /etc/easydns/easydns.yaml
+WorkingDirectory=/var/cache/easydns
+CacheDirectory=easydns
+CacheDirectoryMode=0750
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/log/easydns.log
+UMask=0027
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=easydns
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

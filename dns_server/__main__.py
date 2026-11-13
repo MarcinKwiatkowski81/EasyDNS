@@ -14,6 +14,7 @@ Kolejność inicjalizacji:
 import argparse
 import asyncio
 import logging
+from logging.handlers import SysLogHandler
 import os
 import signal
 import sys
@@ -33,10 +34,16 @@ from .zone import ZoneStore
 
 def setup_logging(cfg: dict) -> None:
     level = getattr(logging, cfg.get("level", "INFO").upper(), logging.INFO)
-    handlers = [logging.StreamHandler(sys.stdout)]
+    if cfg.get("syslog", False) and os.path.exists("/dev/log"):
+        handlers = [SysLogHandler(address="/dev/log", facility=SysLogHandler.LOG_DAEMON)]
+        handlers[0].ident = "easydns: "
+    else:
+        handlers = [logging.StreamHandler(sys.stdout)]
     logfile = cfg.get("file", "")
     if logfile:
-        os.makedirs(os.path.dirname(logfile), exist_ok=True)
+        directory = os.path.dirname(logfile)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
     logging.basicConfig(
         level=level,
@@ -58,7 +65,7 @@ async def run(config_path: str) -> None:
     logger.info("Startuję serwer DNS, konfiguracja: %s", config_path)
 
     server_id  = cfg["server"].get("id", "node")
-    state_file = cfg.get("state_file", "state.yaml")
+    state_file = cfg.get("state_file", "/var/cache/easydns/state.yaml")
 
     # 2 + 3. Strefy lokalne i persystencja
     zones = ZoneStore(server_id)
@@ -155,8 +162,8 @@ def main() -> None:
     )
     parser.add_argument(
         "-c", "--config",
-        default="config.yaml",
-        help="Ścieżka do pliku konfiguracyjnego (domyślnie: config.yaml)",
+        default="/etc/easydns/easydns.yaml",
+        help="Ścieżka do konfiguracji (domyślnie: /etc/easydns/easydns.yaml)",
     )
     args = parser.parse_args()
 

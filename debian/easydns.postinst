@@ -1,0 +1,20 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    if ! getent passwd easydns >/dev/null; then
+        adduser --system --group --home /var/cache/easydns \
+            --no-create-home --quiet easydns
+    fi
+    install -d -o root -g easydns -m 0750 /etc/easydns
+    if [ -f /etc/easydns/easydns.yaml ]; then
+        chown root:easydns /etc/easydns/easydns.yaml
+        chmod 0640 /etc/easydns/easydns.yaml
+    fi
+    install -d -o easydns -g easydns -m 0750 /var/cache/easydns
+    if [ ! -e /var/log/easydns.log ]; then
+        install -o easydns -g adm -m 0640 /dev/null /var/log/easydns.log
+    fi
+fi
+
+#DEBHELPER#

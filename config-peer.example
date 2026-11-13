@@ -1,0 +1,83 @@
+# Opcjonalny peering natywny HUB-BB (TCP 5353), niezalezny od hierarchii mkw.
+# Ten plik zastepuje konfiguracje hierarchiczna, nie jest do niej dolaczany.
+# Oba wezly replikuja wszystkie skonfigurowane strefy.
+# Przyklad dla BB; na HUB zmien server.id na ns-hub-peer i peers[0].host
+# na 192.168.32.16. Dopasuj ACL do faktycznego adresu zrodlowego partnera.
+# Wygeneruj wspolny klucz: python3 -c 'import secrets; print(secrets.token_hex(32))'
+# Wpisz ten sam klucz na obu wezlach przed wlaczeniem uslugi.
+
+server:
+  id: "ns-bb-peer"
+  listen: "0.0.0.0"
+  port: 53
+  tcp: true
+  udp: true
+
+peer_listen:
+  host: "0.0.0.0"
+  port: 5353
+
+peers:
+  - host: "192.168.10.5"
+    port: 5353
+    key: "REPLACE-WITH-A-RANDOM-SHARED-SECRET"
+
+forwarders:
+  - "8.8.8.8"
+  - "1.1.1.1"
+
+cache:
+  enabled: true
+  max_size: 5000
+  min_ttl: 30
+
+state_file: "/var/cache/easydns/state-peer.yaml"
+
+acl:
+  - name: "localhost"
+    match: ["127.0.0.0/8", "::1/128"]
+    allow: ["read", "write", "peer"]
+  - name: "dns-peers"
+    match: ["192.168.10.5/32", "192.168.10.6/32", "192.168.32.16/32"]
+    allow: ["read", "peer"]
+  - name: "private-networks"
+    match: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    allow: ["read"]
+  - name: "default"
+    match: ["0.0.0.0/0", "::/0"]
+    allow: []
+
+zones:
+  - name: "replica.internal"
+    records:
+      - name: "@"
+        type: SOA
+        ttl: 3600
+        mname: "hub.replica.internal"
+        rname: "admin.replica.internal"
+        serial: 2026111301
+        refresh: 3600
+        retry: 900
+        expire: 604800
+        minimum: 300
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "hub.replica.internal"
+      - name: "@"
+        type: NS
+        ttl: 3600
+        value: "bb.replica.internal"
+      - name: "hub"
+        type: A
+        ttl: 3600
+        value: "192.168.10.5"
+      - name: "bb"
+        type: A
+        ttl: 3600
+        value: "192.168.32.16"
+
+logging:
+  level: "INFO"
+  syslog: true
+  file: ""

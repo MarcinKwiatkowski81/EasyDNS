@@ -1,0 +1,18 @@
+Source: easydns
+Section: net
+Priority: optional
+Maintainer: Marcin Kwiatkowski <marcin@kwiatkowski.info.pl>
+Build-Depends: debhelper-compat (= 13), dh-sequence-python3, python3 (>= 3.11), python3-dnslib (>= 0.9.19), python3-yaml (>= 6.0)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: easydns
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends}, python3 (>= 3.11), python3-dnslib (>= 0.9.19), python3-yaml (>= 6.0), adduser
+Description: internal DNS server with conditional forwarding and native peering
+ EasyDNS serves local forward and reverse zones, caches DNS answers and
+ forwards queries to upstream resolvers. Optional authenticated native
+ peering synchronizes records between nodes.
+ .
+ Includes a systemd service and sample configurations for hierarchical
+ hub-and-branch deployments.
