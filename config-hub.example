@@ -6,7 +6,7 @@
 #        conditional forward krk.mkw. → Kraków
 #
 #  Interfejsy VPN:
-#    192.168.10.1  — koniec tunelu do Krakowa
+#    192.168.10.1  — DNS huba / koniec tunelu do Krakowa
 #    192.168.10.5  — koniec tunelu do Bielska
 #    192.168.10.65 — koniec tunelu dla laptopów
 #
@@ -38,13 +38,42 @@ forwarders:
 # Hub zwraca pełną odpowiedź (nie tylko referral), bo sam odpytuje właściwy serwer.
 forward_zones:
   "bb.mkw.":
-    - "192.168.32.16"       # ns0.bb.mkw (via tunel VPN 192.168.10.5→192.168.10.6)
+    - "192.168.32.5"        # ns0.bb.mkw
   "krk.mkw.":
-    - "192.168.16.16"       # ns0.krk.mkw (via tunel VPN 192.168.10.1→192.168.10.2)
-  "32.168.192.in-addr.arpa.":
-    - "192.168.32.16"       # reverse Bielsko
-  "16.168.192.in-addr.arpa.":
-    - "192.168.16.16"       # reverse Kraków
+    - "192.168.16.5"        # ns0.krk.mkw
+  # Reverse /20: osobna strefa dla każdego /24.
+  "32.168.192.in-addr.arpa.": &bb_dns ["192.168.32.5"]
+  "33.168.192.in-addr.arpa.": *bb_dns
+  "34.168.192.in-addr.arpa.": *bb_dns
+  "35.168.192.in-addr.arpa.": *bb_dns
+  "36.168.192.in-addr.arpa.": *bb_dns
+  "37.168.192.in-addr.arpa.": *bb_dns
+  "38.168.192.in-addr.arpa.": *bb_dns
+  "39.168.192.in-addr.arpa.": *bb_dns
+  "40.168.192.in-addr.arpa.": *bb_dns
+  "41.168.192.in-addr.arpa.": *bb_dns
+  "42.168.192.in-addr.arpa.": *bb_dns
+  "43.168.192.in-addr.arpa.": *bb_dns
+  "44.168.192.in-addr.arpa.": *bb_dns
+  "45.168.192.in-addr.arpa.": *bb_dns
+  "46.168.192.in-addr.arpa.": *bb_dns
+  "47.168.192.in-addr.arpa.": *bb_dns
+  "16.168.192.in-addr.arpa.": &krk_dns ["192.168.16.5"]
+  "17.168.192.in-addr.arpa.": *krk_dns
+  "18.168.192.in-addr.arpa.": *krk_dns
+  "19.168.192.in-addr.arpa.": *krk_dns
+  "20.168.192.in-addr.arpa.": *krk_dns
+  "21.168.192.in-addr.arpa.": *krk_dns
+  "22.168.192.in-addr.arpa.": *krk_dns
+  "23.168.192.in-addr.arpa.": *krk_dns
+  "24.168.192.in-addr.arpa.": *krk_dns
+  "25.168.192.in-addr.arpa.": *krk_dns
+  "26.168.192.in-addr.arpa.": *krk_dns
+  "27.168.192.in-addr.arpa.": *krk_dns
+  "28.168.192.in-addr.arpa.": *krk_dns
+  "29.168.192.in-addr.arpa.": *krk_dns
+  "30.168.192.in-addr.arpa.": *krk_dns
+  "31.168.192.in-addr.arpa.": *krk_dns
 
 cache:
   enabled: true
@@ -59,16 +88,8 @@ acl:
     match: ["127.0.0.0/8", "::1/128"]
     allow: ["read", "write", "peer"]
 
-  - name: "vpn-tunel-krk"           # Kraków → hub (10.2 pyta 10.1)
-    match: ["192.168.10.0/26"]
-    allow: ["read"]
-
-  - name: "vpn-tunel-bb"            # Bielsko → hub (10.6 pyta 10.5)
-    match: ["192.168.10.4/30"]
-    allow: ["read"]
-
-  - name: "vpn-tunel-laptopy"
-    match: ["192.168.10.64/26"]
+  - name: "private-networks"
+    match: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
     allow: ["read"]
 
   - name: "default"
@@ -128,7 +149,7 @@ zones:
       - name: "ns0.hub"
         type: A
         ttl: 3600
-        value: "192.168.10.1"       # adres dostępny z Krakowa; dostosuj wg potrzeb
+        value: "192.168.10.1"       # DNS huba
 
 
   # ════════════════════════════════════════════════════════════
@@ -217,7 +238,7 @@ zones:
       - name: "1"
         type: PTR
         ttl: 3600
-        value: "tun-krk.hub.mkw"
+        value: "ns0.hub.mkw"
 
       - name: "2"
         type: PTR
@@ -233,11 +254,6 @@ zones:
         type: PTR
         ttl: 3600
         value: "tun-hub.bb.mkw"
-
-      - name: "16"
-        type: PTR
-        ttl: 3600
-        value: "ns0.bb.mkw"
 
       - name: "65"
         type: PTR

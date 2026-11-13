@@ -7,7 +7,7 @@
 #
 #  Interfejsy:
 #    192.168.10.6  — koniec tunelu do centrum (tun-hub)
-#    192.168.32.16 — adres LAN serwera DNS
+#    192.168.32.5  — adres DNS w sieci 192.168.32.0/20
 #
 #  Uruchomienie:
 #    cp config-bb.example config.yaml
@@ -29,22 +29,36 @@ peer_listen:
 
 # Ogólny forwarder dla ruchu internetowego — przez hub VPN
 forwarders:
-  - "192.168.10.5"      # hub end of bb tunnel (odpyta hub, hub fowarduje do 8.8.8.8)
+  - "192.168.10.1"      # DNS huba
   - "8.8.8.8"           # fallback bezpośredni (jeśli hub niedostępny)
 
 # ── Conditional forwarding ───────────────────────────────────────────────────
 forward_zones:
   "mkw.":
-    - "192.168.10.5"    # hub (strefa root)
+    - "192.168.10.1"    # hub (strefa root)
   "hub.mkw.":
-    - "192.168.10.5"    # hub
+    - "192.168.10.1"    # hub
   "krk.mkw.":
-    - "192.168.16.16"   # ns0.krk.mkw bezpośrednio przez VPN (jeśli hub padnie, krk dalej działa)
+    - "192.168.16.16"    # ns0.krk.mkw bezpośrednio przez VPN (jeśli hub padnie, krk dalej działa)
     - "192.168.10.1"    # fallback: hub (który forwarduje do krk)
   "10.168.192.in-addr.arpa.":
-    - "192.168.10.5"    # reverse VPN → hub
-  "16.168.192.in-addr.arpa.":
-    - "192.168.16.16"   # reverse Kraków → ns0.krk.mkw
+    - "192.168.10.1"    # reverse VPN → hub
+  "16.168.192.in-addr.arpa.": &krk_dns ["192.168.16.5"]
+  "17.168.192.in-addr.arpa.": *krk_dns
+  "18.168.192.in-addr.arpa.": *krk_dns
+  "19.168.192.in-addr.arpa.": *krk_dns
+  "20.168.192.in-addr.arpa.": *krk_dns
+  "21.168.192.in-addr.arpa.": *krk_dns
+  "22.168.192.in-addr.arpa.": *krk_dns
+  "23.168.192.in-addr.arpa.": *krk_dns
+  "24.168.192.in-addr.arpa.": *krk_dns
+  "25.168.192.in-addr.arpa.": *krk_dns
+  "26.168.192.in-addr.arpa.": *krk_dns
+  "27.168.192.in-addr.arpa.": *krk_dns
+  "28.168.192.in-addr.arpa.": *krk_dns
+  "29.168.192.in-addr.arpa.": *krk_dns
+  "30.168.192.in-addr.arpa.": *krk_dns
+  "31.168.192.in-addr.arpa.": *krk_dns
 
 cache:
   enabled: true
@@ -59,12 +73,8 @@ acl:
     match: ["127.0.0.0/8", "::1/128"]
     allow: ["read", "write", "peer"]
 
-  - name: "lan-bielsko"
-    match: ["192.168.32.0/24"]
-    allow: ["read"]
-
-  - name: "vpn-hub"                  # hub może odpytywać Bielsko (forward_zones)
-    match: ["192.168.10.4/30"]       # 192.168.10.4–7 (tunel bb)
+  - name: "private-networks"
+    match: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
     allow: ["read"]
 
   - name: "default"
@@ -76,7 +86,7 @@ zones:
 
   # ════════════════════════════════════════════════════════════
   #  bb.mkw.  — strefa Bielsko-Biała
-  #  LAN: 192.168.32.0/24  |  DHCP: .100–.150
+  #  LAN: 192.168.32.0/20  |  DHCP: .100–.150
   # ════════════════════════════════════════════════════════════
   - name: "bb.mkw"
     records:
@@ -162,7 +172,8 @@ zones:
   - name: "32.168.192.in-addr.arpa"
     records:
 
-      - name: "@"
+      - &bb_reverse_soa
+        name: "@"
         type: SOA
         ttl: 3600
         mname:   "ns0.bb.mkw"
@@ -173,7 +184,8 @@ zones:
         expire:  604800
         minimum: 300
 
-      - name: "@"
+      - &bb_reverse_ns
+        name: "@"
         type: NS
         ttl: 3600
         value: "ns0.bb.mkw"
@@ -193,15 +205,42 @@ zones:
         ttl: 3600
         value: "sw0.bb.mkw"
 
-      - name: "5"
-        type: PTR
-        ttl: 3600
-        value: "dsk0.bb.mkw"
-
       - name: "16"
         type: PTR
         ttl: 3600
         value: "ns0.bb.mkw"
+
+  # Pozostale podsieci /24 w 192.168.32.0/20.
+  - name: "33.168.192.in-addr.arpa"
+    records: &bb_reverse_records [*bb_reverse_soa, *bb_reverse_ns]
+  - name: "34.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "35.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "36.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "37.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "38.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "39.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "40.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "41.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "42.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "43.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "44.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "45.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "46.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "47.168.192.in-addr.arpa"
+    records: *bb_reverse_records
 
 logging:
   level: "INFO"

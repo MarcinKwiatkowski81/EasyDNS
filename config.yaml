@@ -1,6 +1,9 @@
 # ============================================================
 #  Konfiguracja serwera DNS — SoftStudio
-#  Skopiuj: cp config.example config.yaml
+#  Hub: 192.168.10.0/24, DNS 192.168.10.1
+#  Krakow: 192.168.16.0/20, DNS 192.168.16.5
+#  Bielsko: 192.168.32.0/20, DNS 192.168.32.5
+#  Przyklad P2P dla huba; konfiguracje lokalizacyjne: config-*.example
 #  Uruchom: python -m dns_server -c config.yaml
 # ============================================================
 
@@ -20,10 +23,10 @@ peer_listen:
 # Klucz HMAC musi być identyczny na obu węzłach danej pary.
 # Wygeneruj: python3 -c "import secrets; print(secrets.token_hex(32))"
 peers:
-  - host: "192.168.1.2"
+  - host: "192.168.16.5"
     port: 5353
     key: "89b30d708324e957289df3184a50a6a8c4f398cb417a12ab00ad285d18fa08d1"
-  - host: "192.168.1.3"
+  - host: "192.168.32.5"
     port: 5353
     key: "89b30d708324e957289df3184a50a6a8c4f398cb417a12ab00ad285d18fa08d1"
 
@@ -57,6 +60,10 @@ acl:
       - "127.0.0.0/8"
       - "::1/128"
     allow: ["read", "write", "peer"]
+
+  - name: "dns-peers"
+    match: ["192.168.10.1/32", "192.168.16.5/32", "192.168.32.5/32"]
+    allow: ["read", "peer"]
 
   - name: "siec-wewnetrzna"
     match:
@@ -101,6 +108,11 @@ zones:
         value: "ns2.internal.lan"
 
       - name: "@"
+        type: NS
+        ttl: 3600
+        value: "ns3.internal.lan"
+
+      - name: "@"
         type: MX
         ttl: 3600
         priority: 10
@@ -121,17 +133,22 @@ zones:
       - name: "ns1"
         type: A
         ttl: 3600
-        value: "192.168.1.1"
+        value: "192.168.10.1"
 
       - name: "ns2"
         type: A
         ttl: 3600
-        value: "192.168.1.2"
+        value: "192.168.16.5"
+
+      - name: "ns3"
+        type: A
+        ttl: 3600
+        value: "192.168.32.5"
 
       - name: "gateway"
         type: A
         ttl: 3600
-        value: "192.168.1.1"
+        value: "192.168.10.1"
 
       - name: "gateway"
         type: AAAA
@@ -141,7 +158,7 @@ zones:
       - name: "mail"
         type: A
         ttl: 3600
-        value: "192.168.1.10"
+        value: "192.168.10.10"
 
       - name: "www"
         type: CNAME
@@ -157,10 +174,11 @@ zones:
         value:    "gateway.internal.lan"
 
   # ── Strefa rewers IPv4 ──────────────────────────────────────
-  - name: "1.168.192.in-addr.arpa"
+  - name: "10.168.192.in-addr.arpa"
     records:
 
-      - name: "@"
+      - &reverse_soa
+        name: "@"
         type: SOA
         ttl: 3600
         mname:   "ns1.internal.lan"
@@ -171,7 +189,8 @@ zones:
         expire:  604800
         minimum: 300
 
-      - name: "@"
+      - &reverse_ns
+        name: "@"
         type: NS
         ttl: 3600
         value: "ns1.internal.lan"
@@ -181,15 +200,90 @@ zones:
         ttl: 3600
         value: "ns1.internal.lan"
 
-      - name: "2"
-        type: PTR
-        ttl: 3600
-        value: "ns2.internal.lan"
-
       - name: "10"
         type: PTR
         ttl: 3600
         value: "mail.internal.lan"
+
+  - name: "16.168.192.in-addr.arpa"
+    records:
+      - *reverse_soa
+      - *reverse_ns
+      - name: "5"
+        type: PTR
+        ttl: 3600
+        value: "ns2.internal.lan"
+
+  - name: "32.168.192.in-addr.arpa"
+    records:
+      - *reverse_soa
+      - *reverse_ns
+      - name: "5"
+        type: PTR
+        ttl: 3600
+        value: "ns3.internal.lan"
+
+  # Pozostale podsieci /24 w sieciach Krakowa i Bielska /20.
+  - name: "17.168.192.in-addr.arpa"
+    records: &reverse_records [*reverse_soa, *reverse_ns]
+  - name: "18.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "19.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "20.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "21.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "22.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "23.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "24.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "25.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "26.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "27.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "28.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "29.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "30.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "31.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "33.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "34.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "35.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "36.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "37.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "38.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "39.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "40.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "41.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "42.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "43.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "44.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "45.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "46.168.192.in-addr.arpa"
+    records: *reverse_records
+  - name: "47.168.192.in-addr.arpa"
+    records: *reverse_records
 
 # ── Logowanie ────────────────────────────────────────────────
 logging:

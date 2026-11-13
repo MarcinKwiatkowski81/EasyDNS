@@ -3,12 +3,13 @@
 #
 #  Topologia:
 #    hub.mkw.  — centrum (serwer VPN), sieć tunelowa 192.168.10.0/24
-#    bb.mkw.   — Bielsko-Biała,        LAN 192.168.32.0/24
-#    krk.mkw.  — Kraków,               LAN 192.168.16.0/24
+#    bb.mkw.   — Bielsko-Biała,        LAN 192.168.32.0/20
+#    krk.mkw.  — Kraków,               LAN 192.168.16.0/20
 #
 #  Serwery DNS:
-#    ns0.bb.mkw.  → 192.168.32.16   (autorytatywny dla wszystkich stref)
-#    ns0.krk.mkw. → 192.168.16.16   (autorytatywny dla wszystkich stref)
+#    ns0.hub.mkw. → 192.168.10.1
+#    ns0.bb.mkw.  → 192.168.32.5    (autorytatywny dla wszystkich stref)
+#    ns0.krk.mkw. → 192.168.16.5    (autorytatywny dla wszystkich stref)
 #    Synchronizacja przez P2P (zmień klucze przed użyciem!)
 #
 #  Użycie:
@@ -32,7 +33,8 @@ peer_listen:
 
 peers:
   # Serwer DNS w Krakowie
-  - host: "192.168.16.16"
+  # Na wezle ns-krk ustaw host partnera na 192.168.32.5.
+  - host: "192.168.16.5"
     port: 5353
     key: "ZMIEN-NA-LOSOWY-KLUCZ-python3 -c 'import secrets; print(secrets.token_hex(32))'"
 
@@ -53,16 +55,12 @@ acl:
     match: ["127.0.0.0/8", "::1/128"]
     allow: ["read", "write", "peer"]
 
-  - name: "vpn-hub"
-    match: ["192.168.10.0/24"]
+  - name: "dns-peers"
+    match: ["192.168.10.1/32", "192.168.16.5/32", "192.168.32.5/32"]
     allow: ["read", "peer"]
 
-  - name: "lan-bielsko"
-    match: ["192.168.32.0/24"]
-    allow: ["read"]
-
-  - name: "lan-krakow"
-    match: ["192.168.16.0/24"]
+  - name: "private-networks"
+    match: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
     allow: ["read"]
 
   - name: "default"
@@ -104,23 +102,23 @@ zones:
       - name: "ns0.bb"
         type: A
         ttl: 3600
-        value: "192.168.32.16"
+        value: "192.168.32.5"
 
       - name: "ns0.krk"
         type: A
         ttl: 3600
-        value: "192.168.16.16"
+        value: "192.168.16.5"
 
       # Wygodny alias: ns.mkw → round-robin na oba serwery DNS
       - name: "ns"
         type: A
         ttl: 300
-        value: "192.168.32.16"
+        value: "192.168.32.5"
 
       - name: "ns"
         type: A
         ttl: 300
-        value: "192.168.16.16"
+        value: "192.168.16.5"
 
 
   # ════════════════════════════════════════════════════════════
@@ -153,6 +151,11 @@ zones:
 
       # ── Tunele wychodzące z centrum ───────────────────────
       # Konwencja nazewnicza: tun-{cel}.hub.mkw
+      - name: "ns0"
+        type: A
+        ttl: 3600
+        value: "192.168.10.1"
+
       - name: "tun-krk"
         type: A
         ttl: 3600
@@ -187,7 +190,7 @@ zones:
 
   # ════════════════════════════════════════════════════════════
   #  bb.mkw.  — Bielsko-Biała
-  #  LAN: 192.168.32.0/24  |  DHCP: .100–.150
+  #  LAN: 192.168.32.0/20  |  DHCP: .100–.150
   #  Tunel do centrum: 192.168.10.6
   # ════════════════════════════════════════════════════════════
   - name: "bb.mkw"
@@ -250,7 +253,7 @@ zones:
       - name: "ns0"
         type: A
         ttl: 3600
-        value: "192.168.32.16"
+        value: "192.168.32.5"
 
       # ── Aliasy wygodne ─────────────────────────────────────
       # gw.bb.mkw → gw0 (bez cyfry, łatwiejsze do wpisania)
@@ -278,7 +281,7 @@ zones:
 
   # ════════════════════════════════════════════════════════════
   #  krk.mkw.  — Kraków
-  #  LAN: 192.168.16.0/24  |  DHCP: .100–.150
+  #  LAN: 192.168.16.0/20  |  DHCP: .100–.150
   #  Tunel do centrum: 192.168.10.2
   # ════════════════════════════════════════════════════════════
   - name: "krk.mkw"
@@ -350,7 +353,7 @@ zones:
       - name: "ns0"
         type: A
         ttl: 3600
-        value: "192.168.16.16"
+        value: "192.168.16.5"
 
       # ── Aliasy wygodne ─────────────────────────────────────
       - name: "gw"
@@ -407,7 +410,7 @@ zones:
       - name: "1"
         type: PTR
         ttl: 3600
-        value: "tun-krk.hub.mkw"
+        value: "ns0.hub.mkw"
 
       # Kraków → Hub
       - name: "2"
@@ -438,7 +441,8 @@ zones:
   - name: "32.168.192.in-addr.arpa"
     records:
 
-      - name: "@"
+      - &bb_reverse_soa
+        name: "@"
         type: SOA
         ttl: 3600
         mname:   "ns0.bb.mkw"
@@ -449,12 +453,14 @@ zones:
         expire:  604800
         minimum: 300
 
-      - name: "@"
+      - &bb_reverse_ns
+        name: "@"
         type: NS
         ttl: 3600
         value: "ns0.bb.mkw"
 
-      - name: "@"
+      - &krk_reverse_ns
+        name: "@"
         type: NS
         ttl: 3600
         value: "ns0.krk.mkw"
@@ -477,11 +483,6 @@ zones:
       - name: "5"
         type: PTR
         ttl: 3600
-        value: "dsk0.bb.mkw"
-
-      - name: "16"
-        type: PTR
-        ttl: 3600
         value: "ns0.bb.mkw"
 
 
@@ -489,7 +490,8 @@ zones:
   - name: "16.168.192.in-addr.arpa"
     records:
 
-      - name: "@"
+      - &krk_reverse_soa
+        name: "@"
         type: SOA
         ttl: 3600
         mname:   "ns0.krk.mkw"
@@ -533,17 +535,74 @@ zones:
       - name: "5"
         type: PTR
         ttl: 3600
-        value: "dsk0.krk.mkw"
+        value: "ns0.krk.mkw"
 
       - name: "8"
         type: PTR
         ttl: 3600
         value: "wifi-ext0.krk.mkw"
 
-      - name: "16"
-        type: PTR
-        ttl: 3600
-        value: "ns0.krk.mkw"
+  # Pozostale podsieci /24 w obu sieciach /20.
+  - name: "33.168.192.in-addr.arpa"
+    records: &bb_reverse_records [*bb_reverse_soa, *bb_reverse_ns, *krk_reverse_ns]
+  - name: "34.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "35.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "36.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "37.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "38.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "39.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "40.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "41.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "42.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "43.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "44.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "45.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "46.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "47.168.192.in-addr.arpa"
+    records: *bb_reverse_records
+  - name: "17.168.192.in-addr.arpa"
+    records: &krk_reverse_records [*krk_reverse_soa, *bb_reverse_ns, *krk_reverse_ns]
+  - name: "18.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "19.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "20.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "21.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "22.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "23.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "24.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "25.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "26.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "27.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "28.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "29.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "30.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "31.168.192.in-addr.arpa"
+    records: *krk_reverse_records
 
 logging:
   level: "INFO"

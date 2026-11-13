@@ -7,7 +7,7 @@
 #
 #  Interfejsy:
 #    192.168.10.2  — koniec tunelu do centrum (tun-hub)
-#    192.168.16.16 — adres LAN serwera DNS
+#    192.168.16.5  — adres DNS w sieci 192.168.16.0/20
 #
 #  Uruchomienie:
 #    cp config-krk.example config.yaml
@@ -38,12 +38,26 @@ forward_zones:
   "hub.mkw.":
     - "192.168.10.1"    # hub
   "bb.mkw.":
-    - "192.168.32.16"   # ns0.bb.mkw bezpośrednio przez VPN
-    - "192.168.10.5"    # fallback: hub end of bb tunnel
+    - "192.168.32.5"    # ns0.bb.mkw bezpośrednio przez VPN
+    - "192.168.10.1"    # fallback: DNS huba
   "10.168.192.in-addr.arpa.":
     - "192.168.10.1"    # reverse VPN → hub
-  "32.168.192.in-addr.arpa.":
-    - "192.168.32.16"   # reverse Bielsko → ns0.bb.mkw
+  "32.168.192.in-addr.arpa.": &bb_dns ["192.168.32.5"]
+  "33.168.192.in-addr.arpa.": *bb_dns
+  "34.168.192.in-addr.arpa.": *bb_dns
+  "35.168.192.in-addr.arpa.": *bb_dns
+  "36.168.192.in-addr.arpa.": *bb_dns
+  "37.168.192.in-addr.arpa.": *bb_dns
+  "38.168.192.in-addr.arpa.": *bb_dns
+  "39.168.192.in-addr.arpa.": *bb_dns
+  "40.168.192.in-addr.arpa.": *bb_dns
+  "41.168.192.in-addr.arpa.": *bb_dns
+  "42.168.192.in-addr.arpa.": *bb_dns
+  "43.168.192.in-addr.arpa.": *bb_dns
+  "44.168.192.in-addr.arpa.": *bb_dns
+  "45.168.192.in-addr.arpa.": *bb_dns
+  "46.168.192.in-addr.arpa.": *bb_dns
+  "47.168.192.in-addr.arpa.": *bb_dns
 
 cache:
   enabled: true
@@ -58,12 +72,8 @@ acl:
     match: ["127.0.0.0/8", "::1/128"]
     allow: ["read", "write", "peer"]
 
-  - name: "lan-krakow"
-    match: ["192.168.16.0/24"]
-    allow: ["read"]
-
-  - name: "vpn-hub"                  # hub może odpytywać Kraków (forward_zones)
-    match: ["192.168.10.0/30"]       # 192.168.10.0–3 (tunel krk)
+  - name: "private-networks"
+    match: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
     allow: ["read"]
 
   - name: "default"
@@ -75,7 +85,7 @@ zones:
 
   # ════════════════════════════════════════════════════════════
   #  krk.mkw.  — strefa Kraków
-  #  LAN: 192.168.16.0/24  |  DHCP: .100–.150
+  #  LAN: 192.168.16.0/20  |  DHCP: .100–.150
   # ════════════════════════════════════════════════════════════
   - name: "krk.mkw"
     records:
@@ -171,7 +181,8 @@ zones:
   - name: "16.168.192.in-addr.arpa"
     records:
 
-      - name: "@"
+      - &krk_reverse_soa
+        name: "@"
         type: SOA
         ttl: 3600
         mname:   "ns0.krk.mkw"
@@ -182,7 +193,8 @@ zones:
         expire:  604800
         minimum: 300
 
-      - name: "@"
+      - &krk_reverse_ns
+        name: "@"
         type: NS
         ttl: 3600
         value: "ns0.krk.mkw"
@@ -207,20 +219,47 @@ zones:
         ttl: 3600
         value: "nas0.krk.mkw"
 
-      - name: "5"
+      - name: "16"
         type: PTR
         ttl: 3600
-        value: "dsk0.krk.mkw"
+        value: "ns0.krk.mkw"
 
       - name: "8"
         type: PTR
         ttl: 3600
         value: "wifi-ext0.krk.mkw"
 
-      - name: "16"
-        type: PTR
-        ttl: 3600
-        value: "ns0.krk.mkw"
+  # Pozostale podsieci /24 w 192.168.16.0/20.
+  - name: "17.168.192.in-addr.arpa"
+    records: &krk_reverse_records [*krk_reverse_soa, *krk_reverse_ns]
+  - name: "18.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "19.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "20.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "21.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "22.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "23.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "24.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "25.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "26.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "27.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "28.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "29.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "30.168.192.in-addr.arpa"
+    records: *krk_reverse_records
+  - name: "31.168.192.in-addr.arpa"
+    records: *krk_reverse_records
 
 logging:
   level: "INFO"
