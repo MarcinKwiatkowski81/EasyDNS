@@ -92,6 +92,49 @@ Klient DNS
 
 ## Konfiguracja
 
+### Hierarchia sieci mkw
+
+Hub jest root-ns dla prywatnej domeny `mkw.`, nie dla internetowej strefy `.`.
+
+| Węzeł | Sieć | DNS | Konfiguracja |
+|-------|------|-----|--------------|
+| Hub | `192.168.10.0/24` | `192.168.10.1` | `config-hub.example` |
+| Kraków | `192.168.16.0/20` | `192.168.16.16` | `config-krk.example` |
+| Bielsko | `192.168.32.0/20` | `192.168.32.16` | `config-bb.example` |
+
+Ze względu na ograniczenia routingu Kraków odpytuje hub pod `192.168.10.1`,
+a Bielsko pod `192.168.10.5` (interfejs huba od strony tunelu Bielska).
+Dotyczy to forwardera ogólnego oraz conditional forwarding domen i reverse DNS.
+Oba adresy należą do tego samego huba; główny rekord `ns0.hub.mkw`
+pozostaje ustawiony na `192.168.10.1`.
+
+`config.yaml` oraz `config-mkw.example` zawierają konfigurację huba.
+Na każdym węźle użyj odpowiadającego mu pliku, np.:
+
+```bash
+sudo python3 -m dns_server -c config-krk.example
+```
+
+Hub utrzymuje `mkw.`, `hub.mkw.` i reverse sieci VPN. Deleguje `krk.mkw.`
+i `bb.mkw.` do właściwych gałęzi, a dzięki conditional forwarding zwraca
+klientowi pełną odpowiedź. Przekazuje też reverse całych sieci `/20`
+(po 16 stref `/24`) do odpowiednich serwerów.
+
+Gałęzie utrzymują wyłącznie własną domenę i reverse własnego `/20`.
+Pozostałe zapytania, w tym do drugiej gałęzi i internetu, wysyłają wyłącznie
+do huba. Nie mają bezpośrednich forwarderów do siebie, publicznego
+fallbacku ani P2P (`peers: []`, `peer_listen.port: 0`). Przykładowa ścieżka:
+`KRK → HUB → BB`; przy awarii huba lokalne strefy nadal działają,
+ale zapytania poza nimi nie mają alternatywnej drogi.
+
+ACL pozwalają na zapytania z `10.0.0.0/8`, `172.16.0.0/12`
+i `192.168.0.0/16`, bez prawa zapisu. Nie jest to blokada ruchu sieciowego
+KRK–BB: taką izolację należy wymusić na firewallu VPN.
+
+Przy migracji z P2P zatrzymaj serwery i zarchiwizuj dotychczasowe pliki
+stanu, jeśli zawierają replikowane strefy. Loader wczytuje stan po
+konfiguracji, więc stary journal może przywrócić nieaktualne strefy i rekordy.
+
 Plik `config.yaml` (schemat opisany w komentarzach):
 
 ### `server`

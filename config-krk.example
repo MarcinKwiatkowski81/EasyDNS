@@ -2,12 +2,11 @@
 #  DNS — węzeł Kraków (krk)
 #  Lokalizacja: Kraków
 #  Rola: strefa krk.mkw. (autorytatywna)
-#        forward mkw. / hub.mkw. → hub VPN
-#        forward bb.mkw.         → Bielsko (bezpośrednio, bez przechodzenia przez hub)
+#        wszystkie pozostale zapytania → hub (root-ns dla mkw.)
 #
 #  Interfejsy:
 #    192.168.10.2  — koniec tunelu do centrum (tun-hub)
-#    192.168.16.5  — adres DNS w sieci 192.168.16.0/20
+#    192.168.16.16 — adres DNS w sieci 192.168.16.0/20
 #
 #  Uruchomienie:
 #    cp config-krk.example config.yaml
@@ -24,40 +23,18 @@ server:
 peers: []
 peer_listen:
   host: "0.0.0.0"
-  port: 5353
+  port: 0
 
 # Ogólny forwarder dla internetu — przez hub
 forwarders:
-  - "192.168.10.1"      # hub end of krk tunnel
-  - "8.8.8.8"           # fallback bezpośredni
+  - "192.168.10.1"      # jedyny upstream: hub
 
 # ── Conditional forwarding ───────────────────────────────────────────────────
 forward_zones:
   "mkw.":
     - "192.168.10.1"    # hub (strefa root)
-  "hub.mkw.":
-    - "192.168.10.1"    # hub
-  "bb.mkw.":
-    - "192.168.32.5"    # ns0.bb.mkw bezpośrednio przez VPN
-    - "192.168.10.1"    # fallback: DNS huba
-  "10.168.192.in-addr.arpa.":
-    - "192.168.10.1"    # reverse VPN → hub
-  "32.168.192.in-addr.arpa.": &bb_dns ["192.168.32.5"]
-  "33.168.192.in-addr.arpa.": *bb_dns
-  "34.168.192.in-addr.arpa.": *bb_dns
-  "35.168.192.in-addr.arpa.": *bb_dns
-  "36.168.192.in-addr.arpa.": *bb_dns
-  "37.168.192.in-addr.arpa.": *bb_dns
-  "38.168.192.in-addr.arpa.": *bb_dns
-  "39.168.192.in-addr.arpa.": *bb_dns
-  "40.168.192.in-addr.arpa.": *bb_dns
-  "41.168.192.in-addr.arpa.": *bb_dns
-  "42.168.192.in-addr.arpa.": *bb_dns
-  "43.168.192.in-addr.arpa.": *bb_dns
-  "44.168.192.in-addr.arpa.": *bb_dns
-  "45.168.192.in-addr.arpa.": *bb_dns
-  "46.168.192.in-addr.arpa.": *bb_dns
-  "47.168.192.in-addr.arpa.": *bb_dns
+  "168.192.in-addr.arpa.":
+    - "192.168.10.1"    # reverse poza lokalnym /20 → hub
 
 cache:
   enabled: true
@@ -218,6 +195,11 @@ zones:
         type: PTR
         ttl: 3600
         value: "nas0.krk.mkw"
+
+      - name: "5"
+        type: PTR
+        ttl: 3600
+        value: "dsk0.krk.mkw"
 
       - name: "16"
         type: PTR

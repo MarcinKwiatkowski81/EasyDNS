@@ -26,7 +26,7 @@ server:
 peers: []
 peer_listen:
   host: "0.0.0.0"
-  port: 5353
+  port: 0
 
 # Internet — ogólny forwarder (gdy zapytanie nie trafia do żadnej lokalnej/zone strefy)
 forwarders:
@@ -38,11 +38,11 @@ forwarders:
 # Hub zwraca pełną odpowiedź (nie tylko referral), bo sam odpytuje właściwy serwer.
 forward_zones:
   "bb.mkw.":
-    - "192.168.32.5"        # ns0.bb.mkw
+    - "192.168.32.16"       # ns0.bb.mkw
   "krk.mkw.":
-    - "192.168.16.5"        # ns0.krk.mkw
+    - "192.168.16.16"       # ns0.krk.mkw
   # Reverse /20: osobna strefa dla każdego /24.
-  "32.168.192.in-addr.arpa.": &bb_dns ["192.168.32.5"]
+  "32.168.192.in-addr.arpa.": &bb_dns ["192.168.32.16"]
   "33.168.192.in-addr.arpa.": *bb_dns
   "34.168.192.in-addr.arpa.": *bb_dns
   "35.168.192.in-addr.arpa.": *bb_dns
@@ -58,7 +58,7 @@ forward_zones:
   "45.168.192.in-addr.arpa.": *bb_dns
   "46.168.192.in-addr.arpa.": *bb_dns
   "47.168.192.in-addr.arpa.": *bb_dns
-  "16.168.192.in-addr.arpa.": &krk_dns ["192.168.16.5"]
+  "16.168.192.in-addr.arpa.": &krk_dns ["192.168.16.16"]
   "17.168.192.in-addr.arpa.": *krk_dns
   "18.168.192.in-addr.arpa.": *krk_dns
   "19.168.192.in-addr.arpa.": *krk_dns

@@ -2,12 +2,11 @@
 #  DNS — węzeł Bielsko-Biała (bb)
 #  Lokalizacja: Bielsko-Biała
 #  Rola: strefa bb.mkw. (autorytatywna)
-#        forward mkw. / hub.mkw. → hub VPN
-#        forward krk.mkw.        → Kraków (bezpośrednio, bez przechodzenia przez hub)
+#        wszystkie pozostale zapytania → hub (root-ns dla mkw.)
 #
 #  Interfejsy:
 #    192.168.10.6  — koniec tunelu do centrum (tun-hub)
-#    192.168.32.5  — adres DNS w sieci 192.168.32.0/20
+#    192.168.32.16 — adres DNS w sieci 192.168.32.0/20
 #
 #  Uruchomienie:
 #    cp config-bb.example config.yaml
@@ -25,40 +24,18 @@ server:
 peers: []
 peer_listen:
   host: "0.0.0.0"
-  port: 5353
+  port: 0
 
 # Ogólny forwarder dla ruchu internetowego — przez hub VPN
 forwarders:
-  - "192.168.10.1"      # DNS huba
-  - "8.8.8.8"           # fallback bezpośredni (jeśli hub niedostępny)
+  - "192.168.10.5"      # jedyny upstream: hub od strony tunelu Bielska
 
 # ── Conditional forwarding ───────────────────────────────────────────────────
 forward_zones:
   "mkw.":
-    - "192.168.10.1"    # hub (strefa root)
-  "hub.mkw.":
-    - "192.168.10.1"    # hub
-  "krk.mkw.":
-    - "192.168.16.16"    # ns0.krk.mkw bezpośrednio przez VPN (jeśli hub padnie, krk dalej działa)
-    - "192.168.10.1"    # fallback: hub (który forwarduje do krk)
-  "10.168.192.in-addr.arpa.":
-    - "192.168.10.1"    # reverse VPN → hub
-  "16.168.192.in-addr.arpa.": &krk_dns ["192.168.16.5"]
-  "17.168.192.in-addr.arpa.": *krk_dns
-  "18.168.192.in-addr.arpa.": *krk_dns
-  "19.168.192.in-addr.arpa.": *krk_dns
-  "20.168.192.in-addr.arpa.": *krk_dns
-  "21.168.192.in-addr.arpa.": *krk_dns
-  "22.168.192.in-addr.arpa.": *krk_dns
-  "23.168.192.in-addr.arpa.": *krk_dns
-  "24.168.192.in-addr.arpa.": *krk_dns
-  "25.168.192.in-addr.arpa.": *krk_dns
-  "26.168.192.in-addr.arpa.": *krk_dns
-  "27.168.192.in-addr.arpa.": *krk_dns
-  "28.168.192.in-addr.arpa.": *krk_dns
-  "29.168.192.in-addr.arpa.": *krk_dns
-  "30.168.192.in-addr.arpa.": *krk_dns
-  "31.168.192.in-addr.arpa.": *krk_dns
+    - "192.168.10.5"    # hub (strefa root), interfejs tunelu Bielska
+  "168.192.in-addr.arpa.":
+    - "192.168.10.5"    # reverse poza lokalnym /20 → hub
 
 cache:
   enabled: true
@@ -204,6 +181,11 @@ zones:
         type: PTR
         ttl: 3600
         value: "sw0.bb.mkw"
+
+      - name: "5"
+        type: PTR
+        ttl: 3600
+        value: "dsk0.bb.mkw"
 
       - name: "16"
         type: PTR
