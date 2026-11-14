@@ -114,8 +114,9 @@ zgodne z rzeczywistymi adresami źródłowymi VPN. Nie uruchamiaj go z kluczem
 zastępczym. Zapewnij łączność TCP 5353 w obu kierunkach.
 
 Testy lokalne: `python3 -m unittest discover -s tests -v`.
-Przed publiczną dystrybucją uzupełnij metadane praw autorskich i licencji
-pakietu: repozytorium nie określa obecnie licencji.
+Projekt jest udostępniany na licencji Apache-2.0. Informacje o prawach
+autorskich i pełny tekst licencji znajdują się w plikach [LICENSE](LICENSE)
+i [debian/copyright](debian/copyright).
 
 ---
 
