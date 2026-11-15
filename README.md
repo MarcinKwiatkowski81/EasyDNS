@@ -157,7 +157,9 @@ Klient DNS
 
 ### Przepływ zapytania
 
-1. Pakiet UDP/TCP trafia do `DnsServer`.
+1. Pakiet UDP/TCP trafia do `DnsServer`. Wiadomości z **QR=1** (odpowiedzi,
+   nie zapytania) są ignorowane bez wysyłania odpowiedzi, przed sprawdzeniem
+   ACL, cache i odpytaniem upstreamu. Nie przerywa to połączenia TCP.
 2. `Resolver.handle()` sprawdza **ACL** — brak uprawnienia `read` → `REFUSED`.
 3. Sprawdza **cache** — trafienie → natychmiastowa odpowiedź.
 4. Szuka **lokalnej strefy** w `ZoneStore`:

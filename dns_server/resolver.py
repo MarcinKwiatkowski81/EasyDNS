@@ -143,13 +143,17 @@ class Resolver:
     async def handle(self, data: bytes, client_ip: str) -> bytes:
         """
         Przetwarza surowe bajty zapytania DNS.
-        Zwraca bajty odpowiedzi gotowe do wysłania.
+        Zwraca bajty odpowiedzi lub b"" dla pakietów do zignorowania.
         """
         try:
             request = DNSRecord.parse(data)
         except Exception as exc:
             logger.warning("Błąd parsowania zapytania DNS od %s: %s",
                            client_ip, exc)
+            return b""
+
+        if request.header.qr:
+            logger.debug("Ignoruję pakiet DNS z QR=1 od %s", client_ip)
             return b""
 
         reply = await self._resolve(request, client_ip)

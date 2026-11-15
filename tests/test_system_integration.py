@@ -3,10 +3,15 @@ import logging
 from logging.handlers import SysLogHandler
 import tempfile
 from pathlib import Path
+import struct
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from dnslib import DNSRecord
+
 from dns_server.__main__ import main, run, setup_logging
+from dns_server.resolver import Resolver
+from dns_server.server import DnsTcpHandler, DnsUdpProtocol
 
 
 class SystemIntegrationTests(unittest.TestCase):
@@ -78,6 +83,73 @@ class StatePathTests(unittest.IsolatedAsyncioTestCase):
             store.return_value.save_state.assert_called_once_with(
                 "/var/cache/easydns/state.yaml"
             )
+
+
+class DnsMessageTests(unittest.IsolatedAsyncioTestCase):
+    QR1_PACKET = (
+        b"\x12\x34\x81\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+        b"\x01a\x03krk\x03mkw\x00\x00\x01\x00\x01"
+    )
+
+    def setUp(self):
+        self.query = DNSRecord.parse(self.QR1_PACKET)
+        self.query.header.qr = 0
+        self.response = self.query.reply()
+        self.resolver = Resolver(
+            zones=Mock(get_zone=Mock(return_value=None)),
+            cache=Mock(get=Mock(return_value=None)),
+            acl=Mock(can_read=Mock(return_value=True)),
+            recursive=Mock(resolve=AsyncMock(return_value=self.response)),
+        )
+
+    async def test_qr1_is_discarded_before_resolution(self):
+        packets = (
+            self.QR1_PACKET,
+            bytes.fromhex(
+                "1234858300010000000100000161036b726b036d6b770000010001"
+                "c00e0006000100000e100022036e7330c00e0561646d696ec012"
+                "78a3f17500000e100000038400093a800000012c"
+            ),
+            b"\x12\x34\x80\x00" + b"\x00" * 8,
+        )
+        for packet in packets:
+            with self.subTest(packet=packet.hex()):
+                self.assertEqual(
+                    await self.resolver.handle(packet, "127.0.0.1"), b""
+                )
+        for dependency in (
+            self.resolver.acl, self.resolver.cache,
+            self.resolver.zones, self.resolver.recursive,
+        ):
+            self.assertEqual(dependency.mock_calls, [])
+
+    async def test_udp_ignores_response_and_answers_query(self):
+        protocol = DnsUdpProtocol(self.resolver)
+        transport = Mock()
+        protocol.connection_made(transport)
+        addr = ("127.0.0.1", 12345)
+
+        await protocol._handle(self.QR1_PACKET, addr)
+        transport.sendto.assert_not_called()
+        await protocol._handle(self.query.pack(), addr)
+        transport.sendto.assert_called_once_with(self.response.pack(), addr)
+
+    async def test_tcp_ignores_response_and_keeps_connection_for_query(self):
+        reader = asyncio.StreamReader()
+        for packet in (self.QR1_PACKET, self.query.pack()):
+            reader.feed_data(struct.pack("!H", len(packet)) + packet)
+        reader.feed_eof()
+        writer = Mock(
+            get_extra_info=Mock(return_value=("127.0.0.1", 12345)),
+            drain=AsyncMock(), wait_closed=AsyncMock(),
+        )
+
+        await DnsTcpHandler(self.resolver, reader, writer).run()
+
+        response = self.response.pack()
+        writer.write.assert_called_once_with(
+            struct.pack("!H", len(response)) + response
+        )
 
 
 if __name__ == "__main__":
