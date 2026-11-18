@@ -149,6 +149,15 @@ class Zone:
             self.on_change(self, rr)
         return True
 
+    def add_record(self, name: str, rtype: str, ttl: int, rdata: dict,
+                   uid: str = None) -> ResourceRecord:
+        """API helper: dodaj lub zaktualizuj rekord (UID generowany dla nowych)."""
+        return self.add(name, rtype, ttl, rdata, uid=uid, origin=self._sid)
+
+    def delete_record(self, uid: str) -> bool:
+        """API helper: oznacz rekord jako usunięty."""
+        return self.delete_uid(uid)
+
     def apply_remote(self, rr: ResourceRecord) -> bool:
         """Scal rekord nadchodzący od peera."""
         with self._lock:
@@ -267,6 +276,12 @@ class ZoneStore:
         with self._lock:
             self._zones[z.origin] = z
         return z
+
+    @property
+    def zones(self) -> Dict[str, Zone]:
+        """Publiczny dostęp do rejestru stref (dla API)."""
+        with self._lock:
+            return dict(self._zones)
 
     def get_zone(self, qname: str) -> Optional[Zone]:
         """Najdokładniejsza strefa pasująca do qname."""

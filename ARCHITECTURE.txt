@@ -1,0 +1,154 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                     EasyDNS REST API Architecture                          ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            CLIENT LAYER                                     │
+│                                                                              │
+│  curl  │  Python  │  Node.js  │  Postman  │  Mobile Apps  │  Webhooks     │
+│   CLI  │ requests │  fetch    │  REST     │   Swift/Kt    │   External    │
+└────────┬──────────┬────────────┬───────────┬────────────────┬───────────────┘
+         │          │            │           │                │
+         └──────────┴────────────┴───────────┴────────────────┘
+                         ↓
+         ┌───────────────────────────────────┐
+         │   HTTPS/TLS (Optional)            │
+         │   - Certificate-based encryption  │
+         │   - Mutual TLS support            │
+         │   - Self-signed or Let's Encrypt  │
+         └───────────┬───────────────────────┘
+                     ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         API SERVER LAYER                                    │
+│                        (aiohttp + asyncio)                                  │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────┐    │
+│  │                     ApiServer (api.py)                            │    │
+│  │                    Port: 8080 (HTTP/8443 HTTPS)                   │    │
+│  │                     Async Event Loop                              │    │
+│  └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│  ┌─────────────────────────── MIDDLEWARE ──────────────────────────┐       │
+│  │                                                                  │       │
+│  │  1. ACL Middleware              2. Rate Limit Middleware       │       │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────┐    │       │
+│  │  │ Check IP in ACL          │  │ 10 req / 60 sec per IP   │    │       │
+│  │  │ Require 'api' permission │  │ X-RateLimit-* headers    │    │       │
+│  │  │ X-Forwarded-For support  │  │ 429 Too Many Requests    │    │       │
+│  │  │ 403 Forbidden on deny    │  │ Sliding window counter    │    │       │
+│  │  └──────────────────────────┘  └──────────────────────────┘    │       │
+│  │                                                                  │       │
+│  └──────────────────────────────────────────────────────────────────┘       │
+│                                                                              │
+│  ┌────────────────────────── ENDPOINTS ───────────────────────────┐        │
+│  │                                                                 │        │
+│  │  GET  /api/v1/zones              → List all zones              │        │
+│  │  GET  /api/v1/zones/{z}/records  → Get records (w/ filters)    │        │
+│  │  POST /api/v1/zones/{z}/records  → Add record (201)            │        │
+│  │  PUT  /api/v1/zones/{z}/records  → Update record (200)         │        │
+│  │  DEL  /api/v1/zones/{z}/records  → Delete record (soft)        │        │
+│  │  GET  /api/v1/stats              → Cache/zone stats            │        │
+│  │  GET  /api/v1/health             → Health check (no ACL)       │        │
+│  │                                                                 │        │
+│  │  Request/Response Format:  JSON                                │        │
+│  │  Timeout:  10 seconds (slowloris protection)                   │        │
+│  │  Buffer:   Async StreamReader/Writer                           │        │
+│  │                                                                 │        │
+│  └────────────────────────────────────────────────────────────────┘        │
+│                                                                              │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       DNS CORE LAYER                                        │
+│                                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │  Resolver    │  │   ZoneStore  │  │    Cache     │  │   ACL        │   │
+│  │              │  │              │  │              │  │              │   │
+│  │ - Query DNS  │  │ - Add zone   │  │ - LRU cache  │  │ - Permissions│   │
+│  │ - Forward    │  │ - Get zone   │  │ - TTL-based  │  │ - ACL rules  │   │
+│  │ - Recursive  │  │ - Zones dict │  │ - Stats      │  │ - can_api()  │   │
+│  │ - Caching    │  │   (via API)  │  │ - Invalidate │  │              │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+│                                                                              │
+│  Zone Operations:                                                           │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │  - add_record(name, type, ttl, rdata) → ResourceRecord            │   │
+│  │  - delete_record(uid) → soft-delete (tombstone flag)              │   │
+│  │  - query(name, type) → List[ResourceRecord]                      │   │
+│  │  - journal(since_seq) → P2P sync support                         │   │
+│  │  - Cache invalidation on every change                             │   │
+│  │  - P2P compatible (uid, seq, ts, deleted flags)                   │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  Persistence:                                                               │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │  - Load from YAML config (zones.records)                          │   │
+│  │  - Load state from state_file (P2P journal)                       │   │
+│  │  - Save state on graceful shutdown                                │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       STORAGE & NETWORK                                     │
+│                                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │  State File  │  │  Config YAML │  │   UDP Port   │  │   TCP Port   │   │
+│  │              │  │              │  │   53         │  │   53         │   │
+│  │ YAML format  │  │  zones:      │  │   DNS Q/A    │  │   DNS Q/A    │   │
+│  │ Records +    │  │  acl:        │  │   (Resolver) │  │   (Resolver) │   │
+│  │ P2P journal  │  │  api:        │  │              │  │              │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+│                                                                              │
+│  API Flow:                                                                  │
+│  Request  → Middleware (ACL, Rate Limit) → Endpoint Handler → Zone Op      │
+│           ↓                                                   ↓             │
+│        403/429                                          Cache Invalidate   │
+│                                                          ↓                  │
+│  Response ← JSON formatted ← Zone updated ← P2P journal updated           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+SECURITY MODEL:
+
+  Client IP (from socket or X-Forwarded-For)
+       ↓
+  ACL Match (127.0.0.1/8, 192.168.0.0/16, etc.)
+       ↓
+  Permission Check (can_api? requires "api" in allow list)
+       ↓
+  Rate Limit Check (10 requests per 60 seconds)
+       ↓
+  Request Timeout Check (10 seconds max body)
+       ↓
+  Handler execution
+       ↓
+  Response (200/201/4xx/5xx)
+
+CONCURRENCY MODEL:
+
+  Client 1 ─┐
+            ├─→ [asyncio event loop]
+  Client 2 ─┤   - Handles multiple clients concurrently
+            ├─→ - Non-blocking I/O
+  Client 3 ─┤   - Lock-free reads (thread-safe Zone operations)
+            │   - Atomic writes (threading.RLock in Zone._lock)
+            └─→
+  
+  Benefits:
+  - Thousands of concurrent clients
+  - No thread context switching overhead
+  - Better resource utilization
+  - Responsive API even under load
+
+CACHING & INVALIDATION:
+
+  Request hits API → Zone operation (add/modify/delete)
+                       ↓
+                    Cache.invalidate(qname, qtype)
+                       ↓
+                    Remove matching entries
+                       ↓
+                    Next DNS query will re-fetch
+
+

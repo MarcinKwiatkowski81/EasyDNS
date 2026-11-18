@@ -4,6 +4,8 @@ Lekki serwer DNS przeznaczony do sieci wewnętrznych. Obsługuje pełny zestaw
 typów rekordów, iteracyjne rozwiązywanie hierarchiczne, synchronizację P2P
 między węzłami (bez relacji master–slave) oraz konfigurowalne ACL.
 
+🆕 **REST API**: Zarządzaj strefami DNS programowo przez bezpieczne HTTP/HTTPS API!
+
 ---
 
 ## Wymagania
@@ -17,6 +19,7 @@ Zależności (`requirements.txt`):
 - **dnslib** ≥ 0.9.19 — kodowanie/dekodowanie pakietów DNS
 - **PyYAML** ≥ 6.0 — konfiguracja i persystencja
 - **cryptography** ≥ 41.0 — HMAC-SHA256 dla protokołu P2P
+- **aiohttp** ≥ 3.9.0 — REST API (opcjonalnie)
 
 ---
 
@@ -36,6 +39,79 @@ Bez roota: ustaw `port: 5300` i przekieruj ruch przez iptables:
 ```bash
 sudo iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-port 5300
 sudo iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-port 5300
+```
+
+---
+
+## REST API
+
+EasyDNS zawiera optymalnie zabezpieczone REST API do zarządzania DNS programowo.
+
+### Cechy
+
+✅ **Nieblokujące** — asyncio + aiohttp  
+✅ **Bezpieczne** — HTTPS/TLS, ACL, API-Key, rate limiting  
+✅ **Ochrona** — Slowloris protection, timeout na body  
+✅ **JSON** — Standardowy format komunikacji  
+
+### Szybki start
+
+```bash
+# 1. Włącz API w config.yaml
+nano config.yaml
+# Zmień: api.enabled = true
+# Dodaj API-Key:
+# api:
+#   keys:
+#     - "sk-prod-xxxxxxxxxxxxxxxx"
+
+# 2. Uruchom serwer
+python3 -m dns_server -c config.yaml
+
+# 3. Test
+curl -H "X-API-Key: sk-prod-xxxxxxxxxxxxxxxx" \
+  http://localhost:8080/api/v1/health
+# {"status": "ok"}
+```
+
+### Endpointy
+
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/v1/zones` | Lista wszystkich stref |
+| GET | `/api/v1/zones/{zone}/records` | Rekordy w strefie |
+| POST | `/api/v1/zones/{zone}/records` | Dodaj rekord |
+| PUT | `/api/v1/zones/{zone}/records` | Modyfikuj rekord |
+| DELETE | `/api/v1/zones/{zone}/records` | Usuń rekord |
+| GET | `/api/v1/stats` | Statystyki serwera |
+| GET | `/api/v1/health` | Health check |
+
+Pełna dokumentacja: [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)  
+Przewodnik instalacji: [API_SETUP_GUIDE.md](./API_SETUP_GUIDE.md)  
+API-Key guide: [API_KEY_GUIDE.md](./API_KEY_GUIDE.md)  
+
+### Przykład
+
+```bash
+# Dodaj rekord A (z API-Key w nagłówku)
+curl -X POST http://localhost:8080/api/v1/zones/example.com/records \
+  -H "X-API-Key: sk-prod-xxxxxxxxxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "www",
+    "type": "A",
+    "ttl": 300,
+    "rdata": {"value": "192.0.2.1"}
+  }'
+
+# Odpowiedź
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "www",
+  "type": "A",
+  "ttl": 300,
+  "rdata": {"value": "192.0.2.1"}
+}
 ```
 
 ---
@@ -398,7 +474,6 @@ dns_server/
 
 ## Możliwe rozszerzenia
 
-- **API HTTP** (FastAPI) do zarządzania rekordami w czasie rzeczywistym
 - **TLS dla P2P** (`ssl.create_default_context()` w asyncio)
 - **EDNS0** — obsługa większych odpowiedzi UDP (do 4096 B)
 - **DNS-over-TLS (DoT)** — port 853

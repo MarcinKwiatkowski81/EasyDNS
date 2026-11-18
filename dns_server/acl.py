@@ -6,6 +6,7 @@ Uprawnienia:
   read   – odpowiadanie na zapytania DNS
   write  – modyfikacja rekordów przez wewnętrzne API
   peer   – synchronizacja P2P między węzłami
+  api    – dostęp do REST API
 """
 import ipaddress
 import logging
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 Address = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
-KNOWN_PERMISSIONS = {"read", "write", "peer"}
+KNOWN_PERMISSIONS = {"read", "write", "peer", "api"}
 
 
 @dataclass
@@ -79,6 +80,10 @@ class Acl:
     def can_peer(self, ip: str) -> bool:
         rule = self._lookup(ip)
         return rule is not None and "peer" in rule.allow
+
+    def can_api(self, ip: str) -> bool:
+        rule = self._lookup(ip)
+        return rule is not None and "api" in rule.allow
 
     def rule_name(self, ip: str) -> str:
         rule = self._lookup(ip)

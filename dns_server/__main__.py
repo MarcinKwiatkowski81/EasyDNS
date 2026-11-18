@@ -8,8 +8,9 @@ Kolejność inicjalizacji:
   4. Zbuduj Cache, ACL, RecursiveResolver, Resolver
   5. Uruchom PeerManager (P2P)
   6. Uruchom serwer DNS (UDP + TCP)
-  7. Pętla główna — sygnały SIGINT/SIGTERM → graceful shutdown
-  8. Zapisz state_file
+  7. Uruchom REST API server (opcjonalnie)
+  8. Pętla główna — sygnały SIGINT/SIGTERM → graceful shutdown
+  9. Zapisz state_file
 """
 import argparse
 import asyncio
@@ -22,6 +23,7 @@ import sys
 import yaml
 
 from .acl import Acl
+from .api import ApiServer
 from .cache import Cache
 from .peer import PeerManager
 from .recursive import RecursiveResolver
@@ -128,7 +130,29 @@ async def run(config_path: str) -> None:
     )
     await dns_srv.start()
 
-    # 7. Graceful shutdown
+    # 7. REST API server (opcjonalny)
+    api_srv = None
+    api_cfg = cfg.get("api", {})
+    if api_cfg.get("enabled", False):
+        # Pobierz API-Key z konfiguracji (mogą być listy lub pojedyncze stringi)
+        api_keys = api_cfg.get("keys", [])
+        if isinstance(api_keys, str):
+            api_keys = [api_keys]
+        
+        api_srv = ApiServer(
+            host=api_cfg.get("listen", "0.0.0.0"),
+            port=int(api_cfg.get("port", 8080)),
+            resolver=resolver,
+            zones=zones,
+            acl=acl,
+            cache=cache,
+            cert_file=api_cfg.get("cert_file"),
+            key_file=api_cfg.get("key_file"),
+            api_keys=api_keys,
+        )
+        await api_srv.start()
+
+    # 8. Graceful shutdown
     loop = asyncio.get_event_loop()
     stop_event = asyncio.Event()
 
@@ -146,8 +170,10 @@ async def run(config_path: str) -> None:
     logger.info("Serwer gotowy. Ctrl+C aby zatrzymać.")
     await stop_event.wait()
 
-    # 8. Sprzątanie
+    # 9. Sprzątanie
     logger.info("Zatrzymuję…")
+    if api_srv:
+        await api_srv.stop()
     peer_mgr.stop()
     await dns_srv.stop()
     zones.save_state(state_file)
