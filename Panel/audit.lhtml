@@ -1,0 +1,125 @@
+<%
+local db_mod = require("lib.db")
+local auth   = require("lib.auth")
+local api    = require("lib.api")
+local layout = require("lib.layout")
+
+local sid  = httpd.get_cookie("DNSSID")
+local user = sid and httpd.session_get(sid)
+if not user then httpd.redirect("/panel/login.lhtml") return end
+
+local db  = db_mod.open()
+local cfg = api.config(db, db_mod)
+local h   = api.health(cfg)
+local api_ok = (h and h.status == 200)
+
+-- paginacja
+local page     = tonumber(httpd.get_param("page")) or 1
+local per_page = 50
+local offset   = (page - 1) * per_page
+
+local filter_user = httpd.get_param("u") or ""
+local filter_act  = httpd.get_param("a") or ""
+
+local where = "WHERE 1=1"
+local params = {}
+if filter_user ~= "" then
+    where = where .. " AND username=?"
+    params[#params+1] = filter_user
+end
+if filter_act ~= "" then
+    where = where .. " AND action LIKE ?"
+    params[#params+1] = "%" .. filter_act .. "%"
+end
+
+local count_params = {}
+for _, v in ipairs(params) do count_params[#count_params+1] = v end
+
+local total = db_mod.scalar(db,
+    "SELECT COUNT(*) FROM audit_log " .. where, count_params) or 0
+
+local page_params = {}
+for _, v in ipairs(params) do page_params[#page_params+1] = v end
+page_params[#page_params+1] = per_page
+page_params[#page_params+1] = offset
+
+local rows = db_mod.query(db,
+    "SELECT ts, username, action, detail FROM audit_log " .. where ..
+    " ORDER BY id DESC LIMIT ? OFFSET ?", page_params)
+
+local total_pages = math.max(1, math.ceil(total / per_page))
+
+-- unikalny lista userów do filtra
+local all_users = db_mod.query(db, "SELECT DISTINCT username FROM audit_log ORDER BY username")
+%>
+<%! layout.head("Audit log") %>
+<%! layout.nav("audit", user, api_ok) %>
+
+<div class="wrap">
+  <div class="page-title">📋 Audit log
+    <small><%= tostring(total) %> wpisów</small>
+  </div>
+
+  <form method="GET" action="/panel/audit.lhtml">
+    <div class="filter-bar" style="margin-bottom:1rem">
+      <select name="u">
+        <option value="">Wszyscy użytkownicy</option>
+<%  for _, r in ipairs(all_users) do %>
+        <option value="<%= httpd.escape_html(r.username) %>"
+          <%! filter_user == r.username and "selected" or "" %>>
+          <%= httpd.escape_html(r.username) %>
+        </option>
+<%  end %>
+      </select>
+      <input name="a" type="text" value="<%= httpd.escape_html(filter_act) %>"
+             placeholder="Akcja…" style="width:160px">
+      <button class="btn btn-ghost" type="submit">Filtruj</button>
+<% if filter_user ~= "" or filter_act ~= "" then %>
+      <a class="btn btn-ghost" href="/panel/audit.lhtml">Wyczyść</a>
+<% end %>
+    </div>
+  </form>
+
+  <div class="card">
+    <table class="tbl">
+      <thead><tr>
+        <th>Czas</th><th>Użytkownik</th><th>Akcja</th><th>Szczegół</th>
+      </tr></thead>
+      <tbody>
+<% if #rows == 0 then %>
+      <tr><td colspan="4" style="text-align:center;padding:1.5rem;color:var(--text3)">
+        Brak wpisów
+      </td></tr>
+<% else %>
+<%  for _, r in ipairs(rows) do %>
+      <tr>
+        <td class="mono" style="white-space:nowrap">
+          <%= os.date("%Y-%m-%d %H:%M:%S", tonumber(r.ts) or 0) %>
+        </td>
+        <td><%= httpd.escape_html(r.username or "") %></td>
+        <td><code><%= httpd.escape_html(r.action or "") %></code></td>
+        <td style="color:var(--text3);font-size:.82rem">
+          <%= httpd.escape_html(r.detail or "") %>
+        </td>
+      </tr>
+<%  end %>
+<% end %>
+      </tbody>
+    </table>
+  </div>
+
+  <%-- PAGINACJA --%>
+<% if total_pages > 1 then %>
+  <div style="display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap">
+<%  for p = 1, total_pages do
+      local cls = (p == page) and "btn btn-primary" or "btn btn-ghost"
+      local qs  = "?page=" .. p
+      if filter_user ~= "" then qs = qs .. "&u=" .. httpd.urlencode(filter_user) end
+      if filter_act  ~= "" then qs = qs .. "&a=" .. httpd.urlencode(filter_act)  end
+%>
+    <a class="<%= cls %>" href="/panel/audit.lhtml<%= qs %>"><%= tostring(p) %></a>
+<%  end %>
+  </div>
+<% end %>
+</div>
+<%! layout.foot() %>

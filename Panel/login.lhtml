@@ -1,0 +1,89 @@
+<%
+local db_mod  = require("lib.db")
+local auth    = require("lib.auth")
+
+-- Już zalogowany?
+local sid = httpd.get_cookie("DNSSID")
+if sid and sid ~= "" and httpd.session_get(sid) then
+    httpd.redirect("/panel/")
+    return
+end
+
+local err = ""
+
+if httpd.method() == "POST" then
+    local form     = httpd.parse_form(httpd.body())
+    local username = (form.username or ""):match("^%s*(.-)%s*$")
+    local password = form.password or ""
+
+    if username == "" or password == "" then
+        err = "Podaj login i hasło."
+    else
+        local ok, db_err = pcall(function()
+            local db = db_mod.open()
+            local user, lerr = auth.login(db, db_mod, username, password)
+            if not user then
+                err = lerr or "Nieprawidłowy login lub hasło."
+            else
+                local new_sid = httpd.session_create(username)
+                httpd.set_cookie("DNSSID", new_sid, {
+                    httpOnly = true,
+                    path     = "/panel",
+                    maxAge   = 28800,   -- 8h
+                    sameSite = "Lax",
+                })
+                auth.audit(db, db_mod, username, "login",
+                    "IP: " .. httpd.remote_addr())
+                httpd.redirect("/panel/")
+            end
+        end)
+        if not ok then
+            err = "Błąd bazy danych: " .. tostring(db_err)
+        end
+    end
+end
+%>
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Logowanie — DNS Panel</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#c9d1d9;
+  min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;
+  padding:2.25rem;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.45)}
+.icon{text-align:center;font-size:2.5rem;margin-bottom:1.25rem}
+h1{text-align:center;font-size:1.15rem;font-weight:700;color:#e6edf3;margin-bottom:1.5rem}
+.err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);color:#ffa198;
+  border-radius:6px;padding:.65rem .9rem;margin-bottom:1.1rem;font-size:.85rem}
+label{display:block;font-size:.8rem;color:#8b949e;font-weight:500;margin-bottom:.3rem}
+input{width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;
+  border-radius:6px;padding:.6rem .8rem;font-size:.9rem;margin-bottom:.9rem;outline:none}
+input:focus{border-color:#388bfd;box-shadow:0 0 0 3px rgba(56,139,253,.15)}
+.btn{width:100%;padding:.65rem;background:#238636;color:#fff;border:none;
+  border-radius:6px;font-size:.95rem;font-weight:600;cursor:pointer}
+.btn:hover{background:#2ea043}
+.hint{text-align:center;margin-top:1rem;font-size:.75rem;color:#6e7681}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">📡</div>
+  <h1>DNS Panel — logowanie</h1>
+<% if err ~= "" then %>
+  <div class="err">⚠ <%= err %></div>
+<% end %>
+  <form method="POST" action="/panel/login.lhtml" autocomplete="off">
+    <label for="u">Login</label>
+    <input id="u" name="username" type="text" autofocus required placeholder="admin">
+    <label for="p">Hasło</label>
+    <input id="p" name="password" type="password" required placeholder="••••••••">
+    <button class="btn" type="submit">Zaloguj →</button>
+  </form>
+  <p class="hint">Domyślne konto: <code>admin</code> / <code>admin</code></p>
+</div>
+</body>
+</html>

@@ -1,0 +1,393 @@
+<%
+local db_mod = require("lib.db")
+local auth   = require("lib.auth")
+local api    = require("lib.api")
+local layout = require("lib.layout")
+
+-- ── Auth ──────────────────────────────────────────────────────────────────
+local sid  = httpd.get_cookie("DNSSID")
+local user = sid and httpd.session_get(sid)
+if not user then httpd.redirect("/panel/login.lhtml") return end
+
+local db  = db_mod.open()
+local cfg = api.config(db, db_mod)
+
+-- ── Parametry GET ─────────────────────────────────────────────────────────
+local sel_zone   = httpd.get_param("zone")   or ""
+local filter_q   = httpd.get_param("q")      or ""
+local filter_type= httpd.get_param("type")   or ""
+
+-- ── Akcje POST (add / update / delete) ───────────────────────────────────
+local flash_ok  = ""
+local flash_err = ""
+
+if httpd.method() == "POST" then
+    local form   = httpd.parse_form(httpd.body())
+    local action = form.action or ""
+    local zone   = form.zone  or ""
+
+    -- ─ DELETE ─
+    if action == "delete" then
+        local uid = form.uid or ""
+        if uid ~= "" and zone ~= "" then
+            local r, e = api.delete_record(cfg, zone, uid)
+            if r and (r.status == 200 or r.status == 201) then
+                flash_ok = "Rekord usunięty."
+                auth.audit(db, db_mod, user, "delete_record",
+                    "zone=" .. zone .. " uid=" .. uid)
+            else
+                flash_err = "Błąd usuwania: " ..
+                    (e or (r and r.raw) or "nieznany błąd")
+            end
+        end
+        sel_zone = zone
+
+    -- ─ ADD ─
+    elseif action == "add" then
+        local name  = form.name  or ""
+        local rtype = (form.rtype or ""):upper()
+        local ttl   = tonumber(form.ttl) or 300
+        local zone2 = zone
+
+        -- Buduj rdata z pól formularza
+        local rdata = {}
+        -- Wspólne pola rdata z formularza
+        if form["rdata_value"]    and form["rdata_value"]    ~= "" then rdata.value    = form["rdata_value"] end
+        if form["rdata_priority"] and form["rdata_priority"] ~= "" then rdata.priority = tonumber(form["rdata_priority"]) end
+        if form["rdata_weight"]   and form["rdata_weight"]   ~= "" then rdata.weight   = tonumber(form["rdata_weight"]) end
+        if form["rdata_port"]     and form["rdata_port"]     ~= "" then rdata.port     = tonumber(form["rdata_port"]) end
+        if form["rdata_flags"]    and form["rdata_flags"]    ~= "" then rdata.flags    = tonumber(form["rdata_flags"]) end
+        if form["rdata_tag"]      and form["rdata_tag"]      ~= "" then rdata.tag      = form["rdata_tag"] end
+
+        if rtype ~= "" and zone2 ~= "" then
+            local r, e = api.add_record(cfg, zone2, name, rtype, ttl, rdata)
+            if r and (r.status == 201 or r.status == 200) then
+                flash_ok = "Rekord " .. name .. " " .. rtype .. " dodany."
+                auth.audit(db, db_mod, user, "add_record",
+                    "zone=" .. zone2 .. " name=" .. name .. " type=" .. rtype)
+            else
+                local msg = ""
+                if r and r.data and r.data.message then msg = r.data.message
+                elseif e then msg = e
+                else msg = (r and r.raw) or "nieznany błąd" end
+                flash_err = "Błąd dodawania: " .. msg
+            end
+        else
+            flash_err = "Podaj typ rekordu."
+        end
+        sel_zone = zone2
+
+    -- ─ UPDATE ─
+    elseif action == "update" then
+        local uid   = form.uid   or ""
+        local name  = form.name  or ""
+        local rtype = (form.rtype or ""):upper()
+        local ttl   = tonumber(form.ttl) or 300
+        local rdata = {}
+        if form["rdata_value"]    and form["rdata_value"]    ~= "" then rdata.value    = form["rdata_value"] end
+        if form["rdata_priority"] and form["rdata_priority"] ~= "" then rdata.priority = tonumber(form["rdata_priority"]) end
+        if form["rdata_weight"]   and form["rdata_weight"]   ~= "" then rdata.weight   = tonumber(form["rdata_weight"]) end
+        if form["rdata_port"]     and form["rdata_port"]     ~= "" then rdata.port     = tonumber(form["rdata_port"]) end
+        if form["rdata_flags"]    and form["rdata_flags"]    ~= "" then rdata.flags    = tonumber(form["rdata_flags"]) end
+        if form["rdata_tag"]      and form["rdata_tag"]      ~= "" then rdata.tag      = form["rdata_tag"] end
+
+        if uid ~= "" and zone ~= "" then
+            local r, e = api.update_record(cfg, zone, uid, name, rtype, ttl, rdata)
+            if r and (r.status == 200 or r.status == 201) then
+                flash_ok = "Rekord zaktualizowany."
+                auth.audit(db, db_mod, user, "update_record",
+                    "zone=" .. zone .. " uid=" .. uid)
+            else
+                local msg = ""
+                if r and r.data and r.data.message then msg = r.data.message
+                elseif e then msg = e
+                else msg = (r and r.raw) or "nieznany błąd" end
+                flash_err = "Błąd aktualizacji: " .. msg
+            end
+        end
+        sel_zone = zone
+    end
+end
+
+-- ── Pobierz listę stref ───────────────────────────────────────────────────
+local api_ok    = false
+local zones_list = {}
+local zr, ze = api.zones(cfg)
+if zr and zr.status == 200 and zr.data and zr.data.zones then
+    api_ok = true
+    zones_list = zr.data.zones
+end
+
+-- ── Pobierz rekordy wybranej strefy ──────────────────────────────────────
+local records  = {}
+local rec_err  = nil
+if sel_zone ~= "" then
+    local rr, re = api.records(cfg, sel_zone, filter_q, filter_type)
+    if rr and rr.status == 200 and rr.data and rr.data.records then
+        records = rr.data.records
+    else
+        rec_err = re or (rr and rr.raw) or "Błąd pobierania rekordów"
+    end
+end
+
+-- Typy do filtrowania
+local rtypes = { "A","AAAA","CNAME","MX","TXT","NS","PTR","SRV","CAA","SOA" }
+%>
+<%! layout.head("Strefy DNS") %>
+<%! layout.nav("zones", user, api_ok) %>
+
+<div class="wrap">
+  <div class="page-title">📂 Zarządzanie strefami DNS</div>
+
+<% if flash_ok ~= "" then %>
+  <div class="alert alert-ok">✓ <%= flash_ok %></div>
+<% end %>
+<% if flash_err ~= "" then %>
+  <div class="alert alert-err">⚠ <%= flash_err %></div>
+<% end %>
+
+  <%-- ZAKŁADKI STREF --%>
+  <div class="zone-tabs">
+<% for _, z in ipairs(zones_list) do
+     local zname = z.name or ""
+     local cls   = (zname == sel_zone) and " active" or ""
+%>
+    <a href="/panel/zones.lhtml?zone=<%= httpd.urlencode(zname) %>"
+       class="<%= cls %>"><%= httpd.escape_html(zname) %></a>
+<% end %>
+<% if #zones_list == 0 then %>
+    <span style="color:var(--text3);font-size:.82rem">Brak stref — sprawdź połączenie z API</span>
+<% end %>
+  </div>
+
+<% if sel_zone ~= "" then %>
+  <%-- PASEK FILTRÓW + PRZYCISK DODAJ --%>
+  <form method="GET" action="/panel/zones.lhtml" style="display:contents">
+    <input type="hidden" name="zone" value="<%= httpd.escape_html(sel_zone) %>">
+    <div class="filter-bar">
+      <input name="q" type="text" placeholder="Szukaj nazwy…"
+             value="<%= httpd.escape_html(filter_q) %>" style="width:200px">
+      <select name="type">
+        <option value="">Wszystkie typy</option>
+<%  for _, t in ipairs(rtypes) do %>
+        <option value="<%= t %>"<%! filter_type == t and " selected" or "" %>><%= t %></option>
+<%  end %>
+      </select>
+      <button class="btn btn-ghost" type="submit">Filtruj</button>
+      <button class="btn btn-primary" type="button"
+              onclick="openAddModal('<%= httpd.escape_html(sel_zone) %>')">+ Dodaj rekord</button>
+    </div>
+  </form>
+
+<% if rec_err then %>
+  <div class="alert alert-err">⚠ <%= rec_err %></div>
+<% end %>
+
+  <%-- TABELA REKORDÓW --%>
+  <div class="card">
+    <div class="card-head">
+      Rekordy: <strong><%= httpd.escape_html(sel_zone) %></strong>
+      <span style="margin-left:auto;color:var(--text3);font-size:.78rem"><%= tostring(#records) %> rekordów</span>
+    </div>
+    <table class="tbl">
+      <thead><tr>
+        <th>Nazwa</th><th>Typ</th><th>TTL</th><th>Dane</th>
+        <th class="hide-sm">Seq</th><th style="width:110px"></th>
+      </tr></thead>
+      <tbody>
+<% if #records == 0 then %>
+      <tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text3)">
+        Brak rekordów
+      </td></tr>
+<% else %>
+<%  for _, rec in ipairs(records) do
+      local name_disp = (rec.name == "" or rec.name == nil) and "@" or rec.name
+      -- JSON rdata jako string dla data-* atrybutu
+      local rdata_json = httpd.json_encode(rec.rdata or {})
+%>
+      <tr>
+        <td class="mono"><%= httpd.escape_html(name_disp) %></td>
+        <td><%! layout.rtype_badge(rec.type) %></td>
+        <td class="mono"><%= tostring(rec.ttl or 0) %></td>
+        <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="<%= httpd.escape_html(layout.rdata_str(rec.rdata)) %>">
+          <%= httpd.escape_html(layout.rdata_str(rec.rdata)) %>
+        </td>
+        <td class="mono hide-sm"><%= tostring(rec.seq or 0) %></td>
+        <td>
+          <div class="btn-group">
+            <button class="btn btn-ghost btn-sm" onclick='openEditModal(
+                "<%= httpd.escape_html(sel_zone) %>",
+                "<%= httpd.escape_html(rec.uid or "") %>",
+                "<%= httpd.escape_html(rec.name or "") %>",
+                "<%= httpd.escape_html(rec.type or "") %>",
+                <%= tostring(rec.ttl or 300) %>,
+                <%! rdata_json %>
+            )'>Edytuj</button>
+            <button class="btn btn-danger btn-sm" onclick='confirmDelete(
+                "<%= httpd.escape_html(sel_zone) %>",
+                "<%= httpd.escape_html(rec.uid or "") %>",
+                "<%= httpd.escape_html(name_disp) .. " " .. httpd.escape_html(rec.type or "") %>"
+            )'>Usuń</button>
+          </div>
+        </td>
+      </tr>
+<%  end %>
+<% end %>
+      </tbody>
+    </table>
+  </div>
+<% end -- sel_zone %>
+</div>
+
+<%-- ═══════════════════════ MODALS ══════════════════════════ --%>
+
+<%-- DELETE confirm --%>
+<div class="modal-backdrop" id="del-modal">
+  <div class="modal">
+    <h3>🗑 Usuń rekord <button class="modal-close" onclick="closeModal('del-modal')">✕</button></h3>
+    <p style="margin-bottom:1.25rem;color:var(--text2)">
+      Czy na pewno chcesz usunąć <strong id="del-label"></strong>?
+    </p>
+    <form method="POST" action="/panel/zones.lhtml" id="del-form">
+      <input type="hidden" name="action" value="delete">
+      <input type="hidden" name="zone"   id="del-zone">
+      <input type="hidden" name="uid"    id="del-uid">
+      <div class="btn-group">
+        <button class="btn btn-danger" type="submit">Usuń</button>
+        <button class="btn btn-ghost"  type="button" onclick="closeModal('del-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<%-- ADD / EDIT modal --%>
+<div class="modal-backdrop" id="rec-modal">
+  <div class="modal">
+    <h3 id="modal-title">Rekord <button class="modal-close" onclick="closeModal('rec-modal')">✕</button></h3>
+    <form method="POST" action="/panel/zones.lhtml" id="rec-form">
+      <input type="hidden" name="action" id="rec-action" value="add">
+      <input type="hidden" name="zone"   id="rec-zone">
+      <input type="hidden" name="uid"    id="rec-uid">
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Nazwa <span style="color:var(--text3)">(@ = apex)</span></label>
+          <input name="name" id="rec-name" type="text" placeholder="www">
+        </div>
+        <div class="form-row">
+          <label>Typ</label>
+          <select name="rtype" id="rec-rtype" onchange="updateRdataFields()">
+<%  for _, t in ipairs(rtypes) do %>
+            <option value="<%= t %>"><%= t %></option>
+<%  end %>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>TTL (s)</label>
+          <input name="ttl" id="rec-ttl" type="number" value="300" min="0" max="604800">
+        </div>
+      </div>
+
+      <div id="rdata-container" class="rdata-fields" style="margin-bottom:1rem"></div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" type="submit" id="modal-submit-btn">Zapisz</button>
+        <button class="btn btn-ghost"   type="button" onclick="closeModal('rec-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+// ── Rdata schematy ──────────────────────────────────────────────────────
+const RDATA_SCHEMA = {
+  A:     [{ key:"value",    label:"Adres IPv4",  ph:"192.0.2.1" }],
+  AAAA:  [{ key:"value",    label:"Adres IPv6",  ph:"2001:db8::1" }],
+  CNAME: [{ key:"value",    label:"Cel (FQDN)",  ph:"target.example.com." }],
+  NS:    [{ key:"value",    label:"Nameserver",  ph:"ns1.example.com." }],
+  PTR:   [{ key:"value",    label:"Cel (FQDN)",  ph:"host.example.com." }],
+  TXT:   [{ key:"value",    label:"Tekst",       ph:"v=spf1 ~all" }],
+  MX:    [{ key:"priority", label:"Priorytet",   ph:"10", type:"number" },
+          { key:"value",    label:"Mail host",   ph:"mail.example.com." }],
+  SRV:   [{ key:"priority", label:"Priorytet",   ph:"10",   type:"number" },
+          { key:"weight",   label:"Waga",        ph:"100",  type:"number" },
+          { key:"port",     label:"Port",        ph:"5060", type:"number" },
+          { key:"value",    label:"Cel",         ph:"sip.example.com." }],
+  CAA:   [{ key:"flags",    label:"Flags",       ph:"0",    type:"number" },
+          { key:"tag",      label:"Tag",         ph:"issue" },
+          { key:"value",    label:"Wartość",     ph:"letsencrypt.org" }],
+  SOA:   [{ key:"value",    label:"MNAME",       ph:"ns1.example.com." }],
+};
+
+function updateRdataFields(vals) {
+  const rtype = document.getElementById('rec-rtype').value;
+  const fields = RDATA_SCHEMA[rtype] || [{ key:"value", label:"Wartość", ph:"" }];
+  const container = document.getElementById('rdata-container');
+  container.innerHTML = '';
+  for (const f of fields) {
+    const row = document.createElement('div');
+    row.className = 'rf-row';
+    const lbl = document.createElement('label');
+    lbl.textContent = f.label;
+    const inp = document.createElement('input');
+    inp.type = f.type || 'text';
+    inp.name = 'rdata_' + f.key;
+    inp.placeholder = f.ph || '';
+    if (vals && vals[f.key] !== undefined) inp.value = vals[f.key];
+    row.appendChild(lbl); row.appendChild(inp);
+    container.appendChild(row);
+  }
+}
+
+// Init on load
+updateRdataFields();
+
+function openAddModal(zone) {
+  document.getElementById('modal-title').childNodes[0].textContent = '➕ Dodaj rekord ';
+  document.getElementById('rec-action').value = 'add';
+  document.getElementById('rec-zone').value   = zone;
+  document.getElementById('rec-uid').value    = '';
+  document.getElementById('rec-name').value   = '';
+  document.getElementById('rec-ttl').value    = '300';
+  document.getElementById('rec-rtype').value  = 'A';
+  updateRdataFields();
+  document.getElementById('modal-submit-btn').textContent = 'Dodaj';
+  document.getElementById('rec-modal').classList.add('open');
+}
+
+function openEditModal(zone, uid, name, rtype, ttl, rdata) {
+  document.getElementById('modal-title').childNodes[0].textContent = '✏ Edytuj rekord ';
+  document.getElementById('rec-action').value = 'update';
+  document.getElementById('rec-zone').value   = zone;
+  document.getElementById('rec-uid').value    = uid;
+  document.getElementById('rec-name').value   = name;
+  document.getElementById('rec-ttl').value    = ttl;
+  // ustaw typ
+  const sel = document.getElementById('rec-rtype');
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === rtype) { sel.selectedIndex = i; break; }
+  }
+  updateRdataFields(rdata);
+  document.getElementById('modal-submit-btn').textContent = 'Zapisz zmiany';
+  document.getElementById('rec-modal').classList.add('open');
+}
+
+function confirmDelete(zone, uid, label) {
+  document.getElementById('del-zone').value  = zone;
+  document.getElementById('del-uid').value   = uid;
+  document.getElementById('del-label').textContent = label;
+  document.getElementById('del-modal').classList.add('open');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// Zamknij modal klikając tło
+document.querySelectorAll('.modal-backdrop').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) el.classList.remove('open');
+  });
+});
+</script>
+<%! layout.foot() %>

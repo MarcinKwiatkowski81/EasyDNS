@@ -1,0 +1,261 @@
+<%
+local db_mod = require("lib.db")
+local auth   = require("lib.auth")
+local api    = require("lib.api")
+local layout = require("lib.layout")
+
+local sid  = httpd.get_cookie("DNSSID")
+local user = sid and httpd.session_get(sid)
+if not user then httpd.redirect("/panel/login.lhtml") return end
+
+local db   = db_mod.open()
+local cfg  = api.config(db, db_mod)
+local h    = api.health(cfg)
+local api_ok = (h and h.status == 200)
+
+-- Sprawdź czy admin
+local role = auth.get_role(db, db_mod, user)
+if role ~= "admin" then
+    httpd.status(403)
+    httpd.write('<p style="color:#f85149;padding:2rem">Brak dostępu.</p>')
+    return
+end
+
+local flash_ok  = ""
+local flash_err = ""
+
+if httpd.method() == "POST" then
+    local form   = httpd.parse_form(httpd.body())
+    local action = form.action or ""
+
+    if action == "add" then
+        local uname = (form.username or ""):match("^%s*(.-)%s*$")
+        local pass  = form.password or ""
+        local urole = form.role or "viewer"
+        if uname == "" or pass == "" then
+            flash_err = "Podaj login i hasło."
+        else
+            local hash = auth.sha256(pass)
+            local ok, err = pcall(function()
+                db_mod.exec(db,
+                    "INSERT INTO users(username,password_hash,role) VALUES(?,?,?)",
+                    { uname, hash, urole })
+            end)
+            if ok then
+                flash_ok = "Użytkownik " .. uname .. " dodany."
+                auth.audit(db, db_mod, user, "add_user", "username=" .. uname)
+            else
+                flash_err = "Błąd: " .. tostring(err)
+            end
+        end
+
+    elseif action == "delete" then
+        local uid = tonumber(form.uid)
+        if uid then
+            -- nie można usunąć siebie
+            local uname = db_mod.scalar(db,
+                "SELECT username FROM users WHERE id=?", { uid })
+            if uname == user then
+                flash_err = "Nie możesz usunąć własnego konta."
+            else
+                db_mod.exec(db, "DELETE FROM users WHERE id=?", { uid })
+                flash_ok = "Użytkownik usunięty."
+                auth.audit(db, db_mod, user, "delete_user", "id=" .. tostring(uid))
+            end
+        end
+
+    elseif action == "change_pass" then
+        local uid  = tonumber(form.uid)
+        local pass = form.password or ""
+        if uid and pass ~= "" then
+            local hash = auth.sha256(pass)
+            db_mod.exec(db,
+                "UPDATE users SET password_hash=? WHERE id=?",
+                { hash, uid })
+            flash_ok = "Hasło zmienione."
+            auth.audit(db, db_mod, user, "change_pass", "id=" .. tostring(uid))
+        else
+            flash_err = "Podaj hasło."
+        end
+
+    elseif action == "change_role" then
+        local uid  = tonumber(form.uid)
+        local urole = form.role or "viewer"
+        if uid then
+            db_mod.exec(db,
+                "UPDATE users SET role=? WHERE id=?", { urole, uid })
+            flash_ok = "Rola zmieniona."
+            auth.audit(db, db_mod, user, "change_role",
+                "id=" .. tostring(uid) .. " role=" .. urole)
+        end
+    end
+end
+
+local users = db_mod.query(db,
+    "SELECT id, username, role, created_at, last_login FROM users ORDER BY id")
+%>
+<%! layout.head("Użytkownicy") %>
+<%! layout.nav("users", user, api_ok) %>
+
+<div class="wrap">
+  <div class="page-title">👥 Użytkownicy panelu</div>
+
+<% if flash_ok ~= "" then %>
+  <div class="alert alert-ok">✓ <%= flash_ok %></div>
+<% end %>
+<% if flash_err ~= "" then %>
+  <div class="alert alert-err">⚠ <%= flash_err %></div>
+<% end %>
+
+  <%-- TABELA UŻYTKOWNIKÓW --%>
+  <div class="card">
+    <div class="card-head">Lista kont</div>
+    <table class="tbl">
+      <thead><tr>
+        <th>Login</th><th>Rola</th><th>Utworzony</th><th>Ostatnie logowanie</th><th></th>
+      </tr></thead>
+      <tbody>
+<% for _, u in ipairs(users) do %>
+      <tr>
+        <td><strong><%= httpd.escape_html(u.username) %></strong>
+          <%! u.username == user and '<span style="font-size:.72rem;color:var(--acc)">(ty)</span>' or "" %>
+        </td>
+        <td><span class="badge <%! u.role == 'admin' and 'badge-a' or 'badge-ns' %>"><%= u.role %></span></td>
+        <td class="mono hide-sm"><%= os.date("%Y-%m-%d", tonumber(u.created_at) or 0) %></td>
+        <td class="mono hide-sm">
+          <%= u.last_login and os.date("%Y-%m-%d %H:%M", tonumber(u.last_login)) or "—" %>
+        </td>
+        <td>
+          <button class="btn btn-ghost btn-sm"
+            onclick="openPassModal(<%= tostring(u.id) %>,'<%= httpd.escape_html(u.username) %>')">
+            Hasło</button>
+          <button class="btn btn-ghost btn-sm"
+            onclick="openRoleModal(<%= tostring(u.id) %>,'<%= httpd.escape_html(u.username) %>','<%= u.role %>')">
+            Rola</button>
+<% if u.username ~= user then %>
+          <button class="btn btn-danger btn-sm"
+            onclick="confirmDelUser(<%= tostring(u.id) %>,'<%= httpd.escape_html(u.username) %>')">
+            Usuń</button>
+<% end %>
+        </td>
+      </tr>
+<% end %>
+      </tbody>
+    </table>
+  </div>
+
+  <%-- FORMULARZ DODAJ --%>
+  <div class="card">
+    <div class="card-head">➕ Dodaj użytkownika</div>
+    <div class="card-body">
+      <form method="POST" action="/panel/users.lhtml">
+        <input type="hidden" name="action" value="add">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Login</label>
+            <input name="username" type="text" required placeholder="login">
+          </div>
+          <div class="form-row">
+            <label>Hasło</label>
+            <input name="password" type="password" required placeholder="••••••••">
+          </div>
+          <div class="form-row">
+            <label>Rola</label>
+            <select name="role">
+              <option value="viewer">viewer — tylko odczyt</option>
+              <option value="editor">editor — odczyt + zapis</option>
+              <option value="admin">admin — pełny dostęp</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-success" type="submit">Dodaj konto</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<%-- MODALS --%>
+<div class="modal-backdrop" id="pass-modal">
+  <div class="modal">
+    <h3>🔑 Zmień hasło: <span id="pass-uname"></span>
+      <button class="modal-close" onclick="closeModal('pass-modal')">✕</button></h3>
+    <form method="POST" action="/panel/users.lhtml">
+      <input type="hidden" name="action" value="change_pass">
+      <input type="hidden" name="uid"    id="pass-uid">
+      <div class="form-row">
+        <label>Nowe hasło</label>
+        <input name="password" type="password" required placeholder="••••••••">
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary">Zmień</button>
+        <button class="btn btn-ghost" type="button" onclick="closeModal('pass-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="role-modal">
+  <div class="modal">
+    <h3>👤 Zmień rolę: <span id="role-uname"></span>
+      <button class="modal-close" onclick="closeModal('role-modal')">✕</button></h3>
+    <form method="POST" action="/panel/users.lhtml">
+      <input type="hidden" name="action" value="change_role">
+      <input type="hidden" name="uid"    id="role-uid">
+      <div class="form-row">
+        <label>Rola</label>
+        <select name="role" id="role-sel">
+          <option value="viewer">viewer</option>
+          <option value="editor">editor</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary">Zapisz</button>
+        <button class="btn btn-ghost" type="button" onclick="closeModal('role-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="deluser-modal">
+  <div class="modal">
+    <h3>🗑 Usuń użytkownika
+      <button class="modal-close" onclick="closeModal('deluser-modal')">✕</button></h3>
+    <p style="margin-bottom:1.25rem;color:var(--text2)">
+      Usunąć konto <strong id="deluser-name"></strong>?
+    </p>
+    <form method="POST" action="/panel/users.lhtml">
+      <input type="hidden" name="action" value="delete">
+      <input type="hidden" name="uid"    id="deluser-uid">
+      <div class="btn-group">
+        <button class="btn btn-danger">Usuń</button>
+        <button class="btn btn-ghost" type="button" onclick="closeModal('deluser-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openPassModal(id, name) {
+  document.getElementById('pass-uid').value = id;
+  document.getElementById('pass-uname').textContent = name;
+  document.getElementById('pass-modal').classList.add('open');
+}
+function openRoleModal(id, name, role) {
+  document.getElementById('role-uid').value = id;
+  document.getElementById('role-uname').textContent = name;
+  const sel = document.getElementById('role-sel');
+  for (let o of sel.options) o.selected = (o.value === role);
+  document.getElementById('role-modal').classList.add('open');
+}
+function confirmDelUser(id, name) {
+  document.getElementById('deluser-uid').value = id;
+  document.getElementById('deluser-name').textContent = name;
+  document.getElementById('deluser-modal').classList.add('open');
+}
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-backdrop').forEach(el => {
+  el.addEventListener('click', e => { if (e.target===el) el.classList.remove('open'); });
+});
+</script>
+<%! layout.foot() %>

@@ -1,0 +1,124 @@
+<%
+local db_mod = require("lib.db")
+local auth   = require("lib.auth")
+local api    = require("lib.api")
+local layout = require("lib.layout")
+
+local sid  = httpd.get_cookie("DNSSID")
+local user = sid and httpd.session_get(sid)
+if not user then httpd.redirect("/panel/login.lhtml") return end
+
+local db  = db_mod.open()
+local cfg = api.config(db, db_mod)
+
+local flash_ok  = ""
+local flash_err = ""
+
+-- ── Zapis ustawień ────────────────────────────────────────────────────────
+if httpd.method() == "POST" then
+    local form = httpd.parse_form(httpd.body())
+    local action = form.action or "api"
+
+    if action == "api" then
+        local fields = {
+            api_host   = form.api_host   or "localhost",
+            api_port   = form.api_port   or "8443",
+            api_scheme = form.api_scheme or "http",
+            api_key    = form.api_key    or "",
+            verify_ssl = form.verify_ssl and "1" or "0",
+        }
+        for k, v in pairs(fields) do
+            db_mod.exec(db,
+                "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                { k, v })
+        end
+        cfg = api.config(db, db_mod)
+        flash_ok = "Ustawienia API zapisane."
+        auth.audit(db, db_mod, user, "settings_api",
+            "host=" .. fields.api_host .. ":" .. fields.api_port)
+    end
+end
+
+-- ── Test połączenia ───────────────────────────────────────────────────────
+local test_result = nil
+local h, he = api.health(cfg)
+local api_ok = (h and h.status == 200)
+if api_ok then
+    test_result = { ok = true, msg = "Połączenie OK — API odpowiada." }
+else
+    test_result = { ok = false, msg = "Brak odpowiedzi: " .. tostring(he or (h and h.raw) or "?") }
+end
+%>
+<%! layout.head("Ustawienia") %>
+<%! layout.nav("settings", user, api_ok) %>
+
+<div class="wrap">
+  <div class="page-title">⚙ Ustawienia panelu</div>
+
+<% if flash_ok ~= "" then %>
+  <div class="alert alert-ok">✓ <%= flash_ok %></div>
+<% end %>
+<% if flash_err ~= "" then %>
+  <div class="alert alert-err">⚠ <%= flash_err %></div>
+<% end %>
+
+  <div class="card">
+    <div class="card-head">🔌 Połączenie z EasyDNS API</div>
+    <div class="card-body">
+<% if test_result then %>
+      <div class="alert <%! test_result.ok and "alert-ok" or "alert-err" %>" style="margin-bottom:1rem">
+        <%! test_result.ok and "✓" or "⚠" %> <%= test_result.msg %>
+      </div>
+<% end %>
+      <form method="POST" action="/panel/settings.lhtml">
+        <input type="hidden" name="action" value="api">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Schemat</label>
+            <select name="api_scheme">
+              <option value="http"  <%! cfg.scheme == "http"  and "selected" or "" %>>HTTP</option>
+              <option value="https" <%! cfg.scheme == "https" and "selected" or "" %>>HTTPS</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Host / adres IP</label>
+            <input name="api_host" type="text"
+                   value="<%= httpd.escape_html(cfg.host) %>" placeholder="localhost">
+          </div>
+          <div class="form-row">
+            <label>Port</label>
+            <input name="api_port" type="number"
+                   value="<%= tostring(cfg.port) %>" min="1" max="65535">
+          </div>
+          <div class="form-row">
+            <label>API-Key <span style="color:var(--text3)">(opcjonalnie)</span></label>
+            <input name="api_key" type="text"
+                   value="<%= httpd.escape_html(cfg.api_key) %>" placeholder="sk-...">
+          </div>
+          <div class="form-row span2">
+            <label>
+              <input name="verify_ssl" type="checkbox"
+                     <%! cfg.verify_ssl and "checked" or "" %> style="width:auto;margin-right:.4rem">
+              Weryfikuj certyfikat SSL
+            </label>
+            <p class="form-hint">Odznacz dla self-signed certyfikatów.</p>
+          </div>
+        </div>
+        <button class="btn btn-primary" type="submit">Zapisz ustawienia</button>
+      </form>
+    </div>
+  </div>
+
+  <%-- INFO --%>
+  <div class="card">
+    <div class="card-head">ℹ Informacje</div>
+    <div class="card-body" style="font-size:.875rem;color:var(--text2)">
+      <p>Panel korzysta z API zdefiniowanego w
+        <code>EasyDNS/API_DOCUMENTATION.md</code>.</p>
+      <p style="margin-top:.625rem">Aktualny URL API:
+        <code><%! cfg.scheme .. "://" .. cfg.host .. ":" .. tostring(cfg.port) .. "/api/v1" %></code>
+      </p>
+    </div>
+  </div>
+</div>
+<%! layout.foot() %>

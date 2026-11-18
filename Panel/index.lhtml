@@ -1,0 +1,134 @@
+<%
+local db_mod = require("lib.db")
+local auth   = require("lib.auth")
+local api    = require("lib.api")
+local layout = require("lib.layout")
+
+-- ── Auth ──────────────────────────────────────────────────────────────────
+local sid  = httpd.get_cookie("DNSSID")
+local user = sid and httpd.session_get(sid)
+if not user then httpd.redirect("/panel/login.lhtml") return end
+
+-- ── Dane ──────────────────────────────────────────────────────────────────
+local db       = db_mod.open()
+local cfg      = api.config(db, db_mod)
+local api_ok   = false
+local stats    = nil
+local zones    = nil
+local api_err  = nil
+
+local h, he = api.health(cfg)
+if h and h.status == 200 then
+    api_ok = true
+    local sr = api.stats(cfg)
+    if sr and sr.status == 200 then stats = sr.data end
+    local zr = api.zones(cfg)
+    if zr and zr.status == 200 then zones = zr.data end
+else
+    api_err = he or (h and "HTTP " .. tostring(h.status)) or "Brak połączenia"
+end
+
+local hit_rate = 0
+if stats and stats.cache then
+    hit_rate = math.floor((stats.cache.hit_rate or 0) * 100)
+end
+
+local zones_list = (zones and zones.zones) or {}
+local total_rec = 0
+for _, z in ipairs(zones_list) do
+    total_rec = total_rec + (z.records_count or 0)
+end
+
+-- Ostatnie wpisy audit
+local audit_rows = db_mod.query(db,
+    "SELECT ts, username, action, detail FROM audit_log ORDER BY id DESC LIMIT 10")
+%>
+<%! layout.head("Dashboard") %>
+<%! layout.nav("dashboard", user, api_ok) %>
+
+<div class="wrap">
+  <div class="page-title">📊 Dashboard
+    <small><%= cfg.scheme %>://<%= cfg.host %>:<%= tostring(cfg.port) %></small>
+  </div>
+
+<% if api_err then %>
+  <div class="alert alert-err">⚠ Brak połączenia z API EasyDNS: <strong><%= api_err %></strong>
+    — sprawdź <a href="/panel/settings.lhtml">ustawienia</a>.</div>
+<% end %>
+
+  <%-- STAT CARDS --%>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Status API</div>
+      <div class="value <%! api_ok and "grn" or "red" %>"><%! api_ok and "OK" or "ERROR" %></div>
+    </div>
+<% if stats then %>
+    <div class="stat-card">
+      <div class="label">Strefy</div>
+      <div class="value"><%= tostring(stats.zones_count or 0) %></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Rekordy (łącznie)</div>
+      <div class="value"><%= tostring(stats.total_records or 0) %></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Cache hit rate</div>
+      <div class="value <%! hit_rate >= 70 and "grn" or hit_rate >= 40 and "yel" or "red" %>"><%= tostring(hit_rate) %>%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Cache hits</div>
+      <div class="value"><%= tostring(stats.cache and stats.cache.hits or 0) %></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Cache misses</div>
+      <div class="value"><%= tostring(stats.cache and stats.cache.misses or 0) %></div>
+    </div>
+<% end %>
+  </div>
+
+  <%-- ZONES QUICK LIST --%>
+<% if #zones_list > 0 then %>
+  <div class="card">
+    <div class="card-head">📂 Strefy DNS</div>
+    <table class="tbl">
+      <thead><tr>
+        <th>Strefa</th><th>Rekordy</th><th>Max seq</th><th></th>
+      </tr></thead>
+      <tbody>
+<%  for _, z in ipairs(zones_list) do %>
+      <tr>
+        <td class="mono"><%= httpd.escape_html(z.name or "") %></td>
+        <td><%= tostring(z.records_count or 0) %></td>
+        <td class="mono"><%= tostring(z.max_seq or 0) %></td>
+        <td><a class="btn btn-ghost btn-sm"
+               href="/panel/zones.lhtml?zone=<%= httpd.urlencode(z.name or "") %>">Zarządzaj →</a></td>
+      </tr>
+<%  end %>
+      </tbody>
+    </table>
+  </div>
+<% end %>
+
+  <%-- AUDIT LOG --%>
+  <div class="card">
+    <div class="card-head">📋 Ostatnie zdarzenia</div>
+    <table class="tbl">
+      <thead><tr><th>Czas</th><th>Użytkownik</th><th>Akcja</th><th>Szczegół</th></tr></thead>
+      <tbody>
+<% if #audit_rows == 0 then %>
+      <tr><td colspan="4" style="color:var(--text3);text-align:center;padding:1.25rem">Brak wpisów</td></tr>
+<% else %>
+<%  for _, r in ipairs(audit_rows) do %>
+      <tr>
+        <td class="mono" style="white-space:nowrap"><%= os.date("%Y-%m-%d %H:%M", tonumber(r.ts) or 0) %></td>
+        <td><%= httpd.escape_html(r.username or "") %></td>
+        <td><code><%= httpd.escape_html(r.action or "") %></code></td>
+        <td style="color:var(--text3)"><%= httpd.escape_html(r.detail or "") %></td>
+      </tr>
+<%  end %>
+<% end %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<%! layout.foot() %>

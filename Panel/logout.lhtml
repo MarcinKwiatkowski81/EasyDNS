@@ -1,0 +1,19 @@
+<%
+local db_mod = require("lib.db")
+local auth   = require("lib.auth")
+
+local sid = httpd.get_cookie("DNSSID")
+if sid and sid ~= "" then
+    local user = httpd.session_get(sid)
+    if user then
+        local ok, db = pcall(db_mod.open)
+        if ok then auth.audit(db, db_mod, user, "logout", "") end
+    end
+    httpd.session_destroy(sid)
+end
+
+httpd.set_cookie("DNSSID", "", {
+    httpOnly = true, path = "/panel", maxAge = 0, sameSite = "Lax"
+})
+httpd.redirect("/panel/login.lhtml")
+%>
