@@ -14,6 +14,7 @@ Synchronizacja P2P:
   tiebreaker) i aktualizuje swój lokalny stan.
 """
 import logging
+import os
 import threading
 import time
 import uuid
@@ -63,6 +64,7 @@ class Zone:
         self.origin: str = name.lower().rstrip(".") + "."
         self._sid = server_id
         self._records: Dict[str, ResourceRecord] = {}   # uid → RR
+        self._config_uids: set[str] = set()
         self._seq: int = 0
         self._lock = threading.RLock()
         # Callback wywoływany po każdej zmianie: fn(zone, record)
@@ -154,6 +156,25 @@ class Zone:
         """API helper: dodaj lub zaktualizuj rekord (UID generowany dla nowych)."""
         return self.add(name, rtype, ttl, rdata, uid=uid, origin=self._sid)
 
+    def find_record(self, name: str, rtype: str, ttl: int,
+                    rdata: dict) -> Optional[ResourceRecord]:
+        """Znajdź aktywny rekord o identycznej treści."""
+        rel = self._to_relative(name)
+        if rel is None:
+            rel = name.lower().rstrip(".")
+        with self._lock:
+            return next(
+                (
+                    rr for rr in self._records.values()
+                    if not rr.deleted
+                    and rr.name == rel
+                    and rr.rtype == rtype.upper()
+                    and rr.ttl == ttl
+                    and rr.rdata == rdata
+                ),
+                None,
+            )
+
     def delete_record(self, uid: str) -> bool:
         """API helper: oznacz rekord jako usunięty."""
         return self.delete_uid(uid)
@@ -221,8 +242,51 @@ class Zone:
         for d in data.get("records", []):
             rr = ResourceRecord.from_dict(d)
             with self._lock:
+                config_match = rr.uid if rr.uid in self._config_uids else None
+                if config_match is None:
+                    config_match = next(
+                        (
+                            existing_uid
+                            for existing_uid in self._config_uids
+                            if self._same_record(self._records[existing_uid], rr)
+                        ),
+                        None,
+                    )
+                if config_match is None:
+                    same_owner_type = [
+                        existing_uid
+                        for existing_uid in self._config_uids
+                        if self._records[existing_uid].name == rr.name
+                        and self._records[existing_uid].rtype == rr.rtype
+                    ]
+                    if len(same_owner_type) == 1:
+                        config_match = same_owner_type[0]
+                if config_match is not None:
+                    del self._records[config_match]
+                    self._config_uids.discard(config_match)
+                else:
+                    duplicate_uid = next(
+                        (
+                            existing_uid
+                            for existing_uid, existing in self._records.items()
+                            if existing_uid != rr.uid
+                            and self._same_record(existing, rr)
+                        ),
+                        None,
+                    )
+                    if duplicate_uid is not None:
+                        del self._records[duplicate_uid]
                 self._records[rr.uid] = rr
                 self._seq = max(self._seq, rr.seq)
+
+    @staticmethod
+    def _same_record(left: ResourceRecord, right: ResourceRecord) -> bool:
+        return (
+            left.name == right.name
+            and left.rtype == right.rtype
+            and left.ttl == right.ttl
+            and left.rdata == right.rdata
+        )
 
 
 # ── Rejestr stref ─────────────────────────────────────────────────────────────
@@ -269,13 +333,51 @@ class ZoneStore:
     def __init__(self, server_id: str):
         self._sid = server_id
         self._zones: Dict[str, Zone] = {}   # origin → Zone
+        self._deleted_zones: set[str] = set()
+        self._replaced_zones: set[str] = set()
         self._lock = threading.RLock()
 
     def add_zone(self, name: str) -> Zone:
         z = Zone(name, self._sid)
         with self._lock:
+            if z.origin in self._zones:
+                raise ValueError(f"Zone {z.origin} already exists")
+            if z.origin in self._deleted_zones:
+                self._replaced_zones.add(z.origin)
+            self._deleted_zones.discard(z.origin)
             self._zones[z.origin] = z
         return z
+
+    def rename_zone(self, old_name: str, new_name: str) -> Zone:
+        old_origin = old_name.lower().rstrip(".") + "."
+        new_origin = new_name.lower().rstrip(".") + "."
+        with self._lock:
+            zone = self._zones.get(old_origin)
+            if zone is None:
+                raise KeyError(old_origin)
+            if new_origin != old_origin and new_origin in self._zones:
+                raise ValueError(f"Zone {new_origin} already exists")
+            if new_origin == old_origin:
+                return zone
+            del self._zones[old_origin]
+            with zone._lock:
+                zone.origin = new_origin
+            self._zones[new_origin] = zone
+            self._deleted_zones.add(old_origin)
+            if new_origin in self._deleted_zones:
+                self._replaced_zones.add(new_origin)
+            self._deleted_zones.discard(new_origin)
+            return zone
+
+    def delete_zone(self, name: str) -> Zone:
+        origin = name.lower().rstrip(".") + "."
+        with self._lock:
+            zone = self._zones.pop(origin, None)
+            if zone is None:
+                raise KeyError(origin)
+            self._deleted_zones.add(origin)
+            self._replaced_zones.discard(origin)
+            return zone
 
     @property
     def zones(self) -> Dict[str, Zone]:
@@ -303,16 +405,25 @@ class ZoneStore:
     def load_from_config(self, zones_cfg: list) -> None:
         for zcfg in zones_cfg:
             zone = self.add_zone(zcfg["name"])
-            for rec in zcfg.get("records", []):
+            for record_index, rec in enumerate(zcfg.get("records", [])):
                 rtype = rec["type"].upper()
                 rdata = _rdata_from_cfg(rtype, rec)
-                zone.add(
-                    name=rec.get("name", "@").replace("@", zone.origin),
-                    rtype=rtype,
-                    ttl=int(rec.get("ttl", 300)),
-                    rdata=rdata,
-                    origin=self._sid,
-                )
+                name = rec.get("name", "@").replace("@", zone.origin)
+                ttl = int(rec.get("ttl", 300))
+                if zone.find_record(name, rtype, ttl, rdata) is None:
+                    uid = str(uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"easydns:{self._sid}:{zone.origin}:config:{record_index}",
+                    ))
+                    zone.add(
+                        name=name,
+                        rtype=rtype,
+                        ttl=ttl,
+                        rdata=rdata,
+                        uid=uid,
+                        origin=self._sid,
+                    )
+                    zone._config_uids.add(uid)
             logger.info("Załadowano strefę %s (%d rekordów)",
                         zone.origin, len(zone.all_active()))
 
@@ -323,9 +434,35 @@ class ZoneStore:
             import yaml
             with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                raise ValueError("state file must contain a YAML object")
+            deleted_names = data.get("deleted_zones", [])
+            replaced_names = data.get("replaced_zones", [])
+            if not isinstance(deleted_names, list) or not all(
+                isinstance(name, str) for name in deleted_names
+            ):
+                raise ValueError("deleted_zones must be a list of strings")
+            if not isinstance(replaced_names, list) or not all(
+                isinstance(name, str) for name in replaced_names
+            ):
+                raise ValueError("replaced_zones must be a list of strings")
+            deleted_zones = {
+                name.lower().rstrip(".") + "." for name in deleted_names
+            }
+            replaced_zones = {
+                name.lower().rstrip(".") + "." for name in replaced_names
+            }
+            with self._lock:
+                self._deleted_zones.update(deleted_zones)
+                self._replaced_zones.update(replaced_zones)
+                for name in deleted_zones | replaced_zones:
+                    self._zones.pop(name, None)
             for zdata in data.get("zones", []):
                 name = zdata["zone"]
-                zone = self._zones.get(name.lower().rstrip(".") + ".")
+                origin = name.lower().rstrip(".") + "."
+                if origin in deleted_zones:
+                    continue
+                zone = self._zones.get(origin)
                 if zone is None:
                     zone = self.add_zone(name)
                 zone.load_dict(zdata)
@@ -333,15 +470,27 @@ class ZoneStore:
         except FileNotFoundError:
             logger.info("Brak pliku stanu %s — zaczynam od zera", path)
         except Exception as exc:
-            logger.error("Błąd wczytywania stanu: %s", exc)
+            raise RuntimeError(f"Błąd wczytywania stanu z {path}: {exc}") from exc
 
     def save_state(self, path: str) -> None:
+        import yaml
+
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        tmp = path + ".tmp"
+        data = {
+            "zones": [z.to_dict() for z in self.all_zones()],
+            "deleted_zones": sorted(self._deleted_zones),
+            "replaced_zones": sorted(self._replaced_zones),
+        }
         try:
-            import yaml, os
-            tmp = path + ".tmp"
-            data = {"zones": [z.to_dict() for z in self.all_zones()]}
             with open(tmp, "w", encoding="utf-8") as f:
-                yaml.dump(data, f, allow_unicode=True)
+                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
             os.replace(tmp, path)
-        except Exception as exc:
-            logger.error("Błąd zapisu stanu: %s", exc)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise

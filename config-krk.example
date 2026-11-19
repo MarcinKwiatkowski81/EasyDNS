@@ -41,7 +41,7 @@ cache:
   max_size: 5000
   min_ttl: 30
 
-state_file: "state-krk.yaml"
+state_file: "/var/lib/easydns/state-krk.yaml"
 
 # ── ACL ──────────────────────────────────────────────────────────────────────
 acl:

@@ -16,11 +16,11 @@ Panel/
 │   └── layout.lua     # wspólny layout HTML + helpers
 ├── login.lhtml        # logowanie
 ├── logout.lhtml       # wylogowanie
-├── index.lhtml        # dashboard (statystyki, strefy, audit)
+├── index.lhtml        # dashboard (statystyki i strefy)
 ├── zones.lhtml        # zarządzanie strefami i rekordami
 ├── settings.lhtml     # zarządzanie serwerami i połączeniami API (tylko admin)
 ├── users.lhtml        # zarządzanie kontami (tylko admin)
-└── audit.lhtml        # pełny audit log z filtrowaniem i paginacją
+└── audit.lhtml        # dziennik zdarzeń z filtrowaniem i paginacją
 ```
 
 ## Wymagania
@@ -45,7 +45,7 @@ lub umieść katalog w `www/panel/` serwera.
 1. Otwórz `http://localhost:<port>/panel/`
 2. Zaloguj się: **admin** / **admin**
 3. Przejdź do **Ustawienia** i skonfiguruj pierwszy serwer EasyDNS; kolejne dodaj przez **Dodaj serwer DNS**
-4. Wybierz serwer na dashboardzie lub w zakładce **Strefy** i zarządzaj jego rekordami
+4. Wybierz serwer na dashboardzie lub w zakładce **Strefy**; tam możesz zarządzać strefami i rekordami
 
 > **Zmień hasło admina** po pierwszym logowaniu (zakładka Użytkownicy).
 
@@ -62,7 +62,7 @@ lub umieść katalog w `www/panel/` serwera.
   przenoszone do serwera **EasyDNS**. Użytkownicy i historia zdarzeń pozostają bez zmian.
 - Usunięcie serwera usuwa tylko konfigurację w panelu, nie dane DNS. Można usunąć wszystkie serwery,
   a następnie dodać nowe w ustawieniach.
-- Audit pozostaje wspólny dla panelu. Nowe wpisy zmian rekordów i konfiguracji zawierają ID,
+- Dziennik zdarzeń pozostaje wspólny dla panelu. Nowe wpisy zmian rekordów i konfiguracji zawierają ID,
   nazwę i adres docelowego serwera (bez klucza API).
 
 ## Role użytkowników
@@ -78,7 +78,7 @@ lub umieść katalog w `www/panel/` serwera.
 - Hasła przechowywane jako **SHA-256** (bez soli — do użytku wewnętrznego)
 - Sesje po stronie serwera (`httpd.session_*`)
 - Cookie `DNSSID`: `HttpOnly`, `SameSite=Lax`, TTL 8h
-- Wszystkie akcje zapisywane w **audit logu**
+- Historia działań jest dostępna wyłącznie w zakładce **Dziennik zdarzeń**
 - Połączenie z API opcjonalnie przez HTTPS z weryfikacją certyfikatu
 
 ## Testy panelu

@@ -229,6 +229,20 @@ function M.zones(cfg)
     return api_call(cfg, "GET", "/api/v1/zones", nil)
 end
 
+function M.add_zone(cfg, name)
+    return api_call(cfg, "POST", "/api/v1/zones", { name = name })
+end
+
+function M.update_zone(cfg, old_name, new_name)
+    local path = "/api/v1/zones/" .. httpd.urlencode(old_name)
+    return api_call(cfg, "PUT", path, { name = new_name })
+end
+
+function M.delete_zone(cfg, name)
+    local path = "/api/v1/zones/" .. httpd.urlencode(name)
+    return api_call(cfg, "DELETE", path, nil)
+end
+
 function M.records(cfg, zone, filter_name, filter_type)
     local path = "/api/v1/zones/" .. httpd.urlencode(zone) .. "/records"
     local qs = {}

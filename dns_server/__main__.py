@@ -67,12 +67,42 @@ async def run(config_path: str) -> None:
     logger.info("Startuję serwer DNS, konfiguracja: %s", config_path)
 
     server_id  = cfg["server"].get("id", "node")
-    state_file = cfg.get("state_file", "/var/cache/easydns/state.yaml")
+    configured_state_file = cfg.get("state_file")
+    state_file = configured_state_file or "/var/lib/easydns/state.yaml"
+    load_state_file = state_file
+    legacy_state_file = None
+    migrate_state = False
+    if not configured_state_file:
+        legacy_state_file = "/var/cache/easydns/state.yaml"
+    else:
+        cache_dir = os.path.abspath("/var/cache/easydns")
+        configured_path = os.path.abspath(configured_state_file)
+        try:
+            is_cache_path = (
+                configured_path != cache_dir
+                and os.path.commonpath((cache_dir, configured_path)) == cache_dir
+            )
+        except ValueError:
+            is_cache_path = False
+        if is_cache_path:
+            legacy_state_file = configured_path
+            state_file = os.path.join(
+                "/var/lib/easydns", os.path.relpath(configured_path, cache_dir)
+            )
+    if (
+        legacy_state_file
+        and not os.path.exists(state_file)
+        and os.path.exists(legacy_state_file)
+    ):
+        load_state_file = legacy_state_file
+        migrate_state = True
 
     # 2 + 3. Strefy lokalne i persystencja
     zones = ZoneStore(server_id)
     zones.load_from_config(cfg.get("zones", []))
-    zones.load_state(state_file)
+    zones.load_state(load_state_file)
+    if migrate_state:
+        zones.save_state(state_file)
 
     # 4. Komponenty
     cache_cfg = cfg.get("cache", {})
@@ -149,6 +179,7 @@ async def run(config_path: str) -> None:
             cert_file=api_cfg.get("cert_file"),
             key_file=api_cfg.get("key_file"),
             api_keys=api_keys,
+            state_file=state_file,
         )
         await api_srv.start()
 

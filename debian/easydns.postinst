@@ -12,6 +12,7 @@ if [ "$1" = configure ]; then
         chmod 0640 /etc/easydns/easydns.yaml
     fi
     install -d -o easydns -g easydns -m 0750 /var/cache/easydns
+    install -d -o easydns -g easydns -m 0750 /var/lib/easydns
     if [ ! -e /var/log/easydns.log ]; then
         install -o easydns -g adm -m 0640 /dev/null /var/log/easydns.log
     fi

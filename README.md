@@ -79,6 +79,9 @@ curl -H "X-API-Key: sk-prod-xxxxxxxxxxxxxxxx" \
 | Metoda | Endpoint | Opis |
 |--------|----------|------|
 | GET | `/api/v1/zones` | Lista wszystkich stref |
+| POST | `/api/v1/zones` | Dodaj strefę |
+| PUT | `/api/v1/zones/{zone}` | Zmień nazwę strefy |
+| DELETE | `/api/v1/zones/{zone}` | Usuń strefę |
 | GET | `/api/v1/zones/{zone}/records` | Rekordy w strefie |
 | POST | `/api/v1/zones/{zone}/records` | Dodaj rekord |
 | PUT | `/api/v1/zones/{zone}/records` | Modyfikuj rekord |
@@ -142,7 +145,7 @@ Domyślna konfiguracja pakietu jest konfiguracją huba dla `mkw.`.
 | `/usr/sbin/easydns` | Polecenie uruchamiające aplikację |
 | `/usr/lib/easydns/dns_server/` | Moduły Pythona |
 | `/etc/easydns/easydns.yaml` | Domyślna konfiguracja, chroniona przy aktualizacji przez dpkg |
-| `/var/cache/easydns/state.yaml` | Domyślny plik stanu |
+| `/var/lib/easydns/state.yaml` | Domyślny trwały plik stanu DNS |
 | `/usr/share/doc/easydns/` | Dokumentacja i changelog |
 | `/usr/share/doc/easydns/examples/` | Konfiguracje huba, gałęzi i natywnego peeringu |
 
@@ -162,13 +165,14 @@ sudo systemctl start easydns
 sudo systemctl status easydns
 ```
 
-Przykłady hierarchiczne mają względne nazwy stanu, np. `state-bb.yaml`.
-Usługa ma `WorkingDirectory=/var/cache/easydns`, więc zapisuje je w tym
-katalogu. Przy uruchomieniu ręcznym ustaw bezwzględne `state_file` pod
-`/var/cache/easydns`. Bez podania tego klucza aplikacja używa
-`/var/cache/easydns/state.yaml`. Stan jest zapisywany przy prawidłowym
-zatrzymaniu; cache DNS pozostaje w pamięci. Zgodnie z żądaną lokalizacją
-stan jest w katalogu cache, który administrator może wyczyścić.
+Przykłady konfiguracji zapisują stan w `/var/lib/easydns/`, poza katalogiem
+cache. Bez jawnego `state_file` aplikacja używa
+`/var/lib/easydns/state.yaml`. Przy pierwszym uruchomieniu istniejący stan
+z `/var/cache/easydns/` jest kopiowany do odpowiedniej ścieżki pod
+`/var/lib/easydns/`, o ile docelowy plik jeszcze nie istnieje.
+Zmiany rekordów i stref z API są zapisywane natychmiast, a pełny stan jest
+również zapisywany przy prawidłowym zatrzymaniu. Wyczyszczenie cache nie usuwa
+więc rekordów zarządzanych przez API.
 
 Logowanie domyślnie używa syslog (`logging.syslog: true`, `/dev/log`),
 a gdy socket syslog nie istnieje, stdout przechwytywanego przez journald:
@@ -180,7 +184,7 @@ journalctl -u easydns -f
 Aby dodatkowo zapisywać log do pliku, ustaw `logging.file` na
 `/var/log/easydns.log`. Pakiet przygotowuje ten plik z prawami do zapisu
 dla usługi i instaluje konfigurację logrotate. Katalog `/etc/easydns` jest
-dla usługi tylko do odczytu; plik stanu musi pozostać w katalogu cache.
+dla usługi tylko do odczytu; plik stanu jest zapisywany w `/var/lib/easydns`.
 
 Opcjonalny przykład `config-peer.example` pokazuje natywny peering
 HUB–BB na TCP 5353. To osobny wariant, nie rozszerzenie hierarchii mkw:
@@ -403,8 +407,9 @@ w journalu, żeby węzły, które były offline, mogły odebrać informację o u
 
 ### Persystencja
 
-Stan (journal) zapisywany jest do `state_file` przy zatrzymaniu serwera
-i wczytywany przy starcie. Zapewnia to ciągłość numerów sekwencji po restarcie.
+Stan (journal) jest zapisywany do `state_file` przy każdej zmianie przez API,
+ponownie przy zatrzymaniu serwera i wczytywany przy starcie. Zapewnia to
+ciągłość numerów sekwencji po restarcie i niezależność od czyszczenia cache.
 
 ---
 

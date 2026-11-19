@@ -137,7 +137,7 @@ function M.nav(active, user, api_ok, cfg)
         { href = "/panel/zones.lhtml", label = "Strefy", id = "zones" },
         { href = "/panel/settings.lhtml", label = "Ustawienia", id = "settings" },
         { href = "/panel/users.lhtml", label = "Użytkownicy", id = "users" },
-        { href = "/panel/audit.lhtml", label = "Audit", id = "audit" },
+        { href = "/panel/audit.lhtml", label = "Dziennik zdarzeń", id = "audit" },
     }
     local links = {}
     for _, p in ipairs(pages) do

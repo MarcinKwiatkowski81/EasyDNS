@@ -38,8 +38,51 @@ if form then
     local action = form.action or ""
     local zone   = form.zone  or ""
 
+    -- ─ ADD ZONE ─
+    if action == "zone_add" then
+        local name = form.zone_name or ""
+        local r, e = api.add_zone(cfg, name)
+        if r and r.status == 201 then
+            sel_zone = r.data and r.data.name or name
+            flash_ok = "Strefa " .. sel_zone .. " dodana."
+            auth.audit(db, db_mod, user, "add_zone",
+                servers.detail(cfg) .. " zone=" .. sel_zone)
+        else
+            flash_err = "Błąd dodawania strefy: " ..
+                (r and r.data and r.data.message or e or (r and r.raw) or "nieznany błąd")
+        end
+
+    -- ─ RENAME ZONE ─
+    elseif action == "zone_rename" then
+        local name = form.zone_name or ""
+        local r, e = api.update_zone(cfg, zone, name)
+        if r and r.status == 200 then
+            sel_zone = r.data and r.data.name or name
+            flash_ok = "Strefa zmieniona na " .. sel_zone .. "."
+            auth.audit(db, db_mod, user, "rename_zone",
+                servers.detail(cfg) .. " old_zone=" .. zone .. " zone=" .. sel_zone)
+        else
+            flash_err = "Błąd zmiany nazwy strefy: " ..
+                (r and r.data and r.data.message or e or (r and r.raw) or "nieznany błąd")
+            sel_zone = zone
+        end
+
+    -- ─ DELETE ZONE ─
+    elseif action == "zone_delete" then
+        local r, e = api.delete_zone(cfg, zone)
+        if r and r.status == 200 then
+            flash_ok = "Strefa " .. zone .. " usunięta."
+            auth.audit(db, db_mod, user, "delete_zone",
+                servers.detail(cfg) .. " zone=" .. zone)
+            sel_zone = ""
+        else
+            flash_err = "Błąd usuwania strefy: " ..
+                (r and r.data and r.data.message or e or (r and r.raw) or "nieznany błąd")
+            sel_zone = zone
+        end
+
     -- ─ DELETE ─
-    if action == "delete" then
+    elseif action == "delete" then
         local uid = form.uid or ""
         if uid ~= "" and zone ~= "" then
             local r, e = api.delete_record(cfg, zone, uid)
@@ -153,11 +196,22 @@ local rtypes = { "A","AAAA","CNAME","MX","TXT","NS","PTR","SRV","CAA","SOA" }
   <div class="page-title">📂 Zarządzanie strefami DNS <small><%= cfg.name %></small></div>
 
 <% if flash_ok ~= "" then %>
-  <div class="alert alert-ok">✓ <%= flash_ok %></div>
+  <div class="alert alert-ok">✓ <%= httpd.escape_html(flash_ok) %></div>
 <% end %>
 <% if flash_err ~= "" then %>
-  <div class="alert alert-err">⚠ <%= flash_err %></div>
+  <div class="alert alert-err">⚠ <%= httpd.escape_html(flash_err) %></div>
 <% end %>
+
+  <div class="btn-group" style="margin-bottom:1rem">
+    <button class="btn btn-primary" type="button"
+            onclick="openZoneModal('zone_add', '')">+ Dodaj strefę</button>
+<% if sel_zone ~= "" then %>
+    <button class="btn btn-ghost" type="button"
+            onclick="openZoneModal('zone_rename', '<%= httpd.escape_html(sel_zone) %>')">Zmień nazwę strefy</button>
+    <button class="btn btn-danger" type="button"
+            onclick="confirmDeleteZone('<%= httpd.escape_html(sel_zone) %>')">Usuń strefę</button>
+<% end %>
+  </div>
 
   <%-- ZAKŁADKI STREF --%>
   <div class="zone-tabs">
@@ -255,6 +309,47 @@ local rtypes = { "A","AAAA","CNAME","MX","TXT","NS","PTR","SRV","CAA","SOA" }
 </div>
 
 <%-- ═══════════════════════ MODALS ══════════════════════════ --%>
+
+<%-- ADD / RENAME ZONE --%>
+<div class="modal-backdrop" id="zone-modal">
+  <div class="modal">
+    <h3 id="zone-modal-title">Strefa <button class="modal-close" onclick="closeModal('zone-modal')">✕</button></h3>
+    <form method="POST" action="/panel/zones.lhtml" id="zone-form">
+      <input type="hidden" name="server" value="<%= tostring(cfg.id) %>">
+      <input type="hidden" name="action" id="zone-action">
+      <input type="hidden" name="zone" id="zone-old-name">
+      <div class="form-row">
+        <label for="zone-name">Nazwa strefy</label>
+        <input name="zone_name" id="zone-name" type="text" required
+               placeholder="example.com">
+        <div class="form-hint">Podaj nazwę strefy DNS, np. example.com.</div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" type="submit">Zapisz</button>
+        <button class="btn btn-ghost" type="button" onclick="closeModal('zone-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<%-- DELETE ZONE confirm --%>
+<div class="modal-backdrop" id="zone-del-modal">
+  <div class="modal">
+    <h3>🗑 Usuń strefę <button class="modal-close" onclick="closeModal('zone-del-modal')">✕</button></h3>
+    <p style="margin-bottom:1.25rem;color:var(--text2)">
+      Usunąć strefę <strong id="zone-del-label"></strong> wraz ze wszystkimi rekordami?
+    </p>
+    <form method="POST" action="/panel/zones.lhtml">
+      <input type="hidden" name="server" value="<%= tostring(cfg.id) %>">
+      <input type="hidden" name="action" value="zone_delete">
+      <input type="hidden" name="zone" id="zone-del-name">
+      <div class="btn-group">
+        <button class="btn btn-danger" type="submit">Usuń strefę</button>
+        <button class="btn btn-ghost" type="button" onclick="closeModal('zone-del-modal')">Anuluj</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <%-- DELETE confirm --%>
 <div class="modal-backdrop" id="del-modal">
@@ -397,6 +492,22 @@ function confirmDelete(zone, uid, label) {
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
+}
+
+function openZoneModal(action, zone) {
+  const renaming = action === 'zone_rename';
+  document.getElementById('zone-modal-title').childNodes[0].textContent =
+    renaming ? '✏ Zmień nazwę strefy ' : '➕ Dodaj strefę ';
+  document.getElementById('zone-action').value = action;
+  document.getElementById('zone-old-name').value = zone;
+  document.getElementById('zone-name').value = renaming ? zone : '';
+  document.getElementById('zone-modal').classList.add('open');
+}
+
+function confirmDeleteZone(zone) {
+  document.getElementById('zone-del-name').value = zone;
+  document.getElementById('zone-del-label').textContent = zone;
+  document.getElementById('zone-del-modal').classList.add('open');
 }
 
 // Zamknij modal klikając tło

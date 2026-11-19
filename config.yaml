@@ -92,7 +92,7 @@ api:
     - "sk-1234567890abcdef"        # Production key
     # - "sk-dev-0987654321fedcba"   # Development key
 
-state_file: "state-hub.yaml"
+state_file: "/var/lib/easydns/state-hub.yaml"
 
 # ── ACL ──────────────────────────────────────────────────────────────────────
 acl:

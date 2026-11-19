@@ -80,7 +80,7 @@ cache:
   max_size: 10000
   min_ttl: 30
 
-state_file: "state-hub.yaml"
+state_file: "/var/lib/easydns/state-hub.yaml"
 
 # ── ACL ──────────────────────────────────────────────────────────────────────
 acl:

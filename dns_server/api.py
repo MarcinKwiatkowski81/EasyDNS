@@ -14,6 +14,7 @@ import asyncio
 import hmac
 import json
 import logging
+import re
 import ssl
 import time
 from dataclasses import dataclass
@@ -94,6 +95,7 @@ class ApiServer:
         trusted_proxies: Optional[List[str]] = None,
         rate_limit_requests: int = DEFAULT_RATE_LIMIT_REQUESTS,
         rate_limit_window: float = DEFAULT_RATE_LIMIT_WINDOW,
+        state_file: Optional[str] = None,
     ):
         self._host = host
         self._port = port
@@ -108,6 +110,7 @@ class ApiServer:
         self._trusted_proxies: Set[str] = set(trusted_proxies or [])
         self._rate_limit_requests = rate_limit_requests
         self._rate_limit_window = rate_limit_window
+        self._state_file = state_file
 
         self._server: Optional[asyncio.AbstractServer] = None
         self._rate_limits: Dict[str, RateLimitEntry] = {}
@@ -368,9 +371,11 @@ class ApiServer:
         body: bytes,
     ) -> Tuple[int, Dict[str, Any]]:
         if path == "/api/v1/zones":
-            if method != "GET":
-                raise ApiError(405, "Method not allowed")
-            return self._handle_list_zones()
+            if method == "GET":
+                return self._handle_list_zones()
+            if method == "POST":
+                return self._handle_add_zone(self._parse_json(body))
+            raise ApiError(405, "Method not allowed")
 
         if path == "/api/v1/stats":
             if method != "GET":
@@ -378,6 +383,21 @@ class ApiServer:
             return self._handle_stats()
 
         segments = path.strip("/").split("/")
+        if (
+            len(segments) == 4
+            and segments[0] == "api"
+            and segments[1] == "v1"
+            and segments[2] == "zones"
+        ):
+            zone_name = segments[3]
+            if method == "PUT":
+                return self._handle_rename_zone(
+                    zone_name, self._parse_json(body)
+                )
+            if method == "DELETE":
+                return self._handle_delete_zone(zone_name)
+            raise ApiError(405, "Method not allowed")
+
         if (
             len(segments) == 5
             and segments[0] == "api"
@@ -418,6 +438,32 @@ class ApiServer:
         return zone
 
     @staticmethod
+    def _normalize_zone_name(raw_name: Any) -> str:
+        if not isinstance(raw_name, str):
+            raise ApiError(400, "Field 'name' must be a string")
+        name = raw_name.strip().lower().rstrip(".")
+        labels = name.split(".")
+        if (
+            not name
+            or len(name) > 253
+            or any(
+                not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                for label in labels
+            )
+        ):
+            raise ApiError(400, "Field 'name' must be a valid DNS zone name")
+        return name + "."
+
+    def _persist_state(self) -> None:
+        if not self._state_file:
+            return
+        try:
+            self._zones.save_state(self._state_file)
+        except Exception as exc:
+            logger.exception("Nie można zapisać stanu DNS do %s", self._state_file)
+            raise ApiError(500, "DNS state could not be saved") from exc
+
+    @staticmethod
     def _normalize_record_name(raw_name: Any) -> str:
         """Normalizuje nazwę rekordu; '' oraz '@' reprezentują apex strefy."""
         if not isinstance(raw_name, str):
@@ -435,6 +481,42 @@ class ApiServer:
             self._peer_manager.broadcast_update(zone.origin, rr)
 
     # ── handlery endpointów ─────────────────────────────────────────────────
+
+    def _handle_add_zone(
+        self, data: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        name = self._normalize_zone_name(data.get("name"))
+        try:
+            zone = self._zones.add_zone(name)
+        except ValueError as exc:
+            raise ApiError(409, str(exc)) from exc
+        self._persist_state()
+        return 201, {"name": zone.origin}
+
+    def _handle_rename_zone(
+        self, raw_zone: str, data: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        old_name = self._normalize_zone_name(raw_zone)
+        new_name = self._normalize_zone_name(data.get("name"))
+        try:
+            zone = self._zones.rename_zone(old_name, new_name)
+        except KeyError as exc:
+            raise ApiError(404, f"Zone {old_name} not found") from exc
+        except ValueError as exc:
+            raise ApiError(409, str(exc)) from exc
+        self._persist_state()
+        return 200, {"old_name": old_name, "name": zone.origin}
+
+    def _handle_delete_zone(
+        self, raw_zone: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        name = self._normalize_zone_name(raw_zone)
+        try:
+            self._zones.delete_zone(name)
+        except KeyError as exc:
+            raise ApiError(404, f"Zone {name} not found") from exc
+        self._persist_state()
+        return 200, {"name": name, "deleted": True}
 
     def _handle_list_zones(self) -> Tuple[int, Dict[str, Any]]:
         zones = [
@@ -499,8 +581,19 @@ class ApiServer:
         if not isinstance(rdata, dict) or not rdata:
             raise ApiError(400, "Missing or invalid field: rdata")
 
+        existing = zone.find_record(name, rtype, ttl, rdata)
+        if existing is not None:
+            return 200, {
+                "uid": existing.uid,
+                "name": existing.name,
+                "type": existing.rtype,
+                "ttl": existing.ttl,
+                "rdata": existing.rdata,
+            }
+
         rr = zone.add_record(name=name, rtype=rtype, ttl=ttl, rdata=rdata)
         self._invalidate_record_cache(name, zone.origin, rtype)
+        self._persist_state()
         self._notify_peers(zone, rr)
 
         return 201, {
@@ -547,6 +640,7 @@ class ApiServer:
 
         rr = zone.add_record(name=name, rtype=rtype, ttl=ttl, rdata=rdata, uid=uid)
         self._invalidate_record_cache(name, zone.origin, rtype)
+        self._persist_state()
         self._notify_peers(zone, rr)
 
         return 200, {
@@ -572,6 +666,7 @@ class ApiServer:
 
         zone.delete_record(uid)
         self._invalidate_record_cache(existing.name, zone.origin, existing.rtype)
+        self._persist_state()
         self._notify_peers(zone, existing)
 
         return 200, {"uid": uid, "deleted": True}

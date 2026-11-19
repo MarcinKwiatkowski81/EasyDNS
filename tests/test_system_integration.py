@@ -69,6 +69,7 @@ class StatePathTests(unittest.IsolatedAsyncioTestCase):
             config = Path(directory) / "config.yaml"
             config.write_text("server: {id: test}\npeer_listen: {port: 0}\n")
             with patch("dns_server.__main__.setup_logging"), \
+                    patch("dns_server.__main__.os.path.exists", return_value=False), \
                     patch("dns_server.__main__.ZoneStore") as store, \
                     patch("dns_server.__main__.PeerManager") as peers, \
                     patch("dns_server.__main__.DnsServer") as server, \
@@ -78,11 +79,70 @@ class StatePathTests(unittest.IsolatedAsyncioTestCase):
                 server.return_value.stop = AsyncMock()
                 await run(str(config))
             store.return_value.load_state.assert_called_once_with(
-                "/var/cache/easydns/state.yaml"
+                "/var/lib/easydns/state.yaml"
             )
             store.return_value.save_state.assert_called_once_with(
-                "/var/cache/easydns/state.yaml"
+                "/var/lib/easydns/state.yaml"
             )
+
+    async def test_migrates_legacy_cache_state_to_persistent_directory(self):
+        stopped = asyncio.Event()
+        stopped.set()
+        legacy_path = "/var/cache/easydns/state.yaml"
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            config.write_text("server: {id: test}\npeer_listen: {port: 0}\n")
+
+            def state_exists(path):
+                return path == legacy_path
+
+            with patch("dns_server.__main__.setup_logging"), \
+                    patch("dns_server.__main__.os.path.exists", side_effect=state_exists), \
+                    patch("dns_server.__main__.ZoneStore") as store, \
+                    patch("dns_server.__main__.PeerManager") as peers, \
+                    patch("dns_server.__main__.DnsServer") as server, \
+                    patch("asyncio.Event", return_value=stopped):
+                peers.return_value.start = AsyncMock()
+                server.return_value.start = AsyncMock()
+                server.return_value.stop = AsyncMock()
+                await run(str(config))
+
+            store.return_value.load_state.assert_called_once_with(legacy_path)
+            store.return_value.save_state.assert_called_with(
+                "/var/lib/easydns/state.yaml"
+            )
+            self.assertEqual(store.return_value.save_state.call_count, 2)
+
+    async def test_migrates_explicit_state_file_from_cache_directory(self):
+        stopped = asyncio.Event()
+        stopped.set()
+        legacy_path = "/var/cache/easydns/custom-state.yaml"
+        persistent_path = "/var/lib/easydns/custom-state.yaml"
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            config.write_text(
+                "server: {id: test}\n"
+                "peer_listen: {port: 0}\n"
+                f"state_file: {legacy_path}\n"
+            )
+
+            def state_exists(path):
+                return path == legacy_path
+
+            with patch("dns_server.__main__.setup_logging"), \
+                    patch("dns_server.__main__.os.path.exists", side_effect=state_exists), \
+                    patch("dns_server.__main__.ZoneStore") as store, \
+                    patch("dns_server.__main__.PeerManager") as peers, \
+                    patch("dns_server.__main__.DnsServer") as server, \
+                    patch("asyncio.Event", return_value=stopped):
+                peers.return_value.start = AsyncMock()
+                server.return_value.start = AsyncMock()
+                server.return_value.stop = AsyncMock()
+                await run(str(config))
+
+            store.return_value.load_state.assert_called_once_with(legacy_path)
+            store.return_value.save_state.assert_called_with(persistent_path)
+            self.assertEqual(store.return_value.save_state.call_count, 2)
 
 
 class DnsMessageTests(unittest.IsolatedAsyncioTestCase):

@@ -53,11 +53,11 @@ local total_pages = math.max(1, math.ceil(total / per_page))
 -- unikalny lista userów do filtra
 local all_users = db_mod.query(db, "SELECT DISTINCT username FROM audit_log ORDER BY username")
 %>
-<%! layout.head("Audit log") %>
+<%! layout.head("Dziennik zdarzeń") %>
 <%! layout.nav("audit", user, api_ok, cfg) %>
 
 <div class="wrap">
-  <div class="page-title">📋 Audit log
+  <div class="page-title">📋 Dziennik zdarzeń
     <small><%= tostring(total) %> wpisów</small>
   </div>
 

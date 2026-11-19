@@ -203,7 +203,37 @@ curl https://dns.example.com:8443/api/v1/zones
 
 ---
 
-### 2. Rekordy w strefie
+### 2. Zarządzanie strefami
+
+**Dodawanie:** `POST /api/v1/zones`
+
+```json
+{"name": "example.net"}
+```
+
+Zwraca `201 Created` i nazwę strefy z końcową kropką. Nie można dodać już
+istniejącej strefy (`409 Conflict`).
+
+**Zmiana nazwy:** `PUT /api/v1/zones/{zone}`
+
+```json
+{"name": "new-example.net"}
+```
+
+Zachowuje rekordy strefy pod nową nazwą; zwraca `404 Not Found`, jeśli strefa
+źródłowa nie istnieje, lub `409 Conflict`, jeśli nazwa docelowa jest zajęta.
+
+**Usuwanie:** `DELETE /api/v1/zones/{zone}`
+
+Zwraca `200 OK`. Usunięcie strefy usuwa również jej rekordy i jest zapamiętane
+w pliku stanu, także dla stref zdefiniowanych w konfiguracji.
+
+Zmiany stref i rekordów są zapisywane natychmiast do `state_file`. Domyślna
+ścieżka to `/var/lib/easydns/state.yaml`, poza katalogiem cache.
+
+---
+
+### 3. Rekordy w strefie
 
 **Endpoint:** `GET /api/v1/zones/{zone}/records`
 
@@ -264,11 +294,12 @@ curl "https://dns.example.com:8443/api/v1/zones/example.com/records?name=www&typ
 
 ---
 
-### 3. Dodaj rekord
+### 4. Dodaj rekord
 
 **Endpoint:** `POST /api/v1/zones/{zone}/records`
 
-Dodaje nowy rekord DNS do strefy.
+Dodaje nowy rekord DNS do strefy. Jeśli rekord o tej samej nazwie, typie,
+TTL i danych już istnieje, API zwraca go z `200 OK` zamiast tworzyć duplikat.
 
 **Autoryzacja:** Wymaga uprawnienia `api`
 
@@ -378,7 +409,7 @@ curl -X POST https://dns.example.com:8443/api/v1/zones/example.com/records \
 
 ---
 
-### 4. Modyfikuj rekord
+### 5. Modyfikuj rekord
 
 **Endpoint:** `PUT /api/v1/zones/{zone}/records`
 
@@ -436,7 +467,7 @@ curl -X PUT https://dns.example.com:8443/api/v1/zones/example.com/records \
 
 ---
 
-### 5. Usuń rekord
+### 6. Usuń rekord
 
 **Endpoint:** `DELETE /api/v1/zones/{zone}/records`
 
@@ -480,7 +511,7 @@ curl -X DELETE https://dns.example.com:8443/api/v1/zones/example.com/records \
 
 ---
 
-### 6. Statystyki serwera
+### 7. Statystyki serwera
 
 **Endpoint:** `GET /api/v1/stats`
 
@@ -517,7 +548,7 @@ curl https://dns.example.com:8443/api/v1/stats
 
 ---
 
-### 7. Health check
+### 8. Health check
 
 **Endpoint:** `GET /api/v1/health`
 
@@ -584,6 +615,7 @@ Gdy żądanie nie powiedzie się, serwer zwraca odpowiedź JSON z pełnym opisem
 | **401 Unauthorized** | Nieautoryzowany | Brakuje, nieprawidłowy lub wygasły API-Key |
 | **403 Forbidden** | Dostęp zakazany | IP klienta nie ma uprawnienia `api` w ACL |
 | **404 Not Found** | Nie znaleziono | Strefa lub rekord nie istnieje |
+| **409 Conflict** | Konflikt | Strefa o podanej nazwie już istnieje |
 | **408 Request Timeout** | Timeout | Timeout na body żądania (slowloris protection) |
 | **429 Too Many Requests** | Za wiele żądań | Przekroczony rate limit na IP |
 | **500 Internal Server Error** | Błąd serwera | Nieoczekiwany błąd aplikacji |
@@ -979,4 +1011,3 @@ https://github.com/MarcinKwiatkowski81/EasyDNS/issues
 
 Pełna dokumentacja projektu:  
 https://github.com/MarcinKwiatkowski81/EasyDNS
-

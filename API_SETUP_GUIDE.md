@@ -206,7 +206,7 @@ api:
     - "sk-prod-xxxxxxxxxxxxxxxx"
     - "sk-staging-yyyyyyyyyyyyyyyy"
 
-state_file: "state.yaml"
+state_file: "/var/lib/easydns/state.yaml"
 
 acl:
   - name: "localhost"
@@ -291,7 +291,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/cache/easydns /var/log/easydns
+ReadWritePaths=/var/lib/easydns /var/cache/easydns /var/log/easydns
 
 [Install]
 WantedBy=multi-user.target
