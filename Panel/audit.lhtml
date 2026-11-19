@@ -9,8 +9,9 @@ local user = sid and httpd.session_get(sid)
 if not user then httpd.redirect("/panel/login.lhtml") return end
 
 local db  = db_mod.open()
-local cfg = api.config(db, db_mod)
-local h   = api.health(cfg)
+local cfg, cfg_err = api.config(db, db_mod, httpd.get_param("server"))
+if not cfg and httpd.get_param("server") ~= nil then layout.server_error(user, cfg_err) return end
+local h   = cfg and api.health(cfg)
 local api_ok = (h and h.status == 200)
 
 -- paginacja
@@ -53,7 +54,7 @@ local total_pages = math.max(1, math.ceil(total / per_page))
 local all_users = db_mod.query(db, "SELECT DISTINCT username FROM audit_log ORDER BY username")
 %>
 <%! layout.head("Audit log") %>
-<%! layout.nav("audit", user, api_ok) %>
+<%! layout.nav("audit", user, api_ok, cfg) %>
 
 <div class="wrap">
   <div class="page-title">📋 Audit log
@@ -61,6 +62,9 @@ local all_users = db_mod.query(db, "SELECT DISTINCT username FROM audit_log ORDE
   </div>
 
   <form method="GET" action="/panel/audit.lhtml">
+<% if cfg then %>
+    <input type="hidden" name="server" value="<%= tostring(cfg.id) %>">
+<% end %>
     <div class="filter-bar" style="margin-bottom:1rem">
       <select name="u">
         <option value="">Wszyscy użytkownicy</option>
@@ -75,7 +79,7 @@ local all_users = db_mod.query(db, "SELECT DISTINCT username FROM audit_log ORDE
              placeholder="Akcja…" style="width:160px">
       <button class="btn btn-ghost" type="submit">Filtruj</button>
 <% if filter_user ~= "" or filter_act ~= "" then %>
-      <a class="btn btn-ghost" href="/panel/audit.lhtml">Wyczyść</a>
+      <a class="btn btn-ghost" href="/panel/audit.lhtml<%= cfg and "?server=" .. tostring(cfg.id) or "" %>">Wyczyść</a>
 <% end %>
     </div>
   </form>
@@ -114,6 +118,7 @@ local all_users = db_mod.query(db, "SELECT DISTINCT username FROM audit_log ORDE
 <%  for p = 1, total_pages do
       local cls = (p == page) and "btn btn-primary" or "btn btn-ghost"
       local qs  = "?page=" .. p
+      if cfg then qs = qs .. "&server=" .. tostring(cfg.id) end
       if filter_user ~= "" then qs = qs .. "&u=" .. httpd.urlencode(filter_user) end
       if filter_act  ~= "" then qs = qs .. "&a=" .. httpd.urlencode(filter_act)  end
 %>

@@ -130,7 +130,7 @@ code{font-family:var(--mono);font-size:.85em}
 ]], httpd.escape_html(title), extra_css)
 end
 
-function M.nav(active, user, api_ok)
+function M.nav(active, user, api_ok, cfg)
     local dot_cls = api_ok and "dot" or "dot red"
     local pages = {
         { href = "/panel/", label = "Dashboard", id = "dashboard" },
@@ -141,9 +141,10 @@ function M.nav(active, user, api_ok)
     }
     local links = {}
     for _, p in ipairs(pages) do
+        local href = p.href .. (cfg and "?server=" .. tostring(cfg.id) or "")
         local cls = (active == p.id) and ' class="active"' or ""
         links[#links+1] = string.format('<a href="%s"%s>%s</a>',
-            p.href, cls, p.label)
+            href, cls, p.label)
     end
     return string.format([[
 <nav class="topnav">
@@ -153,6 +154,28 @@ function M.nav(active, user, api_ok)
 </nav>
 ]], dot_cls, table.concat(links, "\n    "),
     httpd.escape_html(user or ""))
+end
+
+function M.server_selector(servers, cfg, path)
+    local options = { '<option value="" disabled>Wybierz serwer</option>' }
+    for _, server in ipairs(servers) do
+        options[#options+1] = string.format('<option value="%d"%s>%s (%s:%d)</option>',
+            server.id, cfg and server.id == cfg.id and " selected" or "",
+            httpd.escape_html(server.name), httpd.escape_html(server.host), server.port)
+    end
+    return string.format([[<form method="GET" action="%s" class="filter-bar">
+      <label for="server-select">Serwer DNS</label>
+      <select id="server-select" name="server">%s</select>
+      <button class="btn btn-ghost" type="submit">Wybierz</button>
+    </form>]], path, table.concat(options))
+end
+
+function M.server_error(user, err)
+    httpd.status(400)
+    httpd.write(M.head("Serwer DNS") .. M.nav("", user, false) ..
+        '<div class="wrap"><div class="alert alert-err">' .. httpd.escape_html(err) ..
+        '</div><a href="/panel/">Wybierz serwer</a> · ' ..
+        '<a href="/panel/settings.lhtml">Ustawienia serwerów</a></div>' .. M.foot())
 end
 
 function M.foot()

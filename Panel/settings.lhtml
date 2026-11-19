@@ -3,122 +3,148 @@ local db_mod = require("lib.db")
 local auth   = require("lib.auth")
 local api    = require("lib.api")
 local layout = require("lib.layout")
+local servers = require("lib.servers")
 
-local sid  = httpd.get_cookie("DNSSID")
-local user = sid and httpd.session_get(sid)
-if not user then httpd.redirect("/panel/login.lhtml") return end
+local user = auth.require_login()
+if not user then return end
+local db = db_mod.open()
+if auth.get_role(db, db_mod, user) ~= "admin" then
+    httpd.status(403)
+    httpd.write(layout.head("Brak dostępu") .. layout.nav("settings", user, false) ..
+        '<div class="wrap"><div class="alert alert-err">Brak dostępu.</div></div>' .. layout.foot())
+    return
+end
 
-local db  = db_mod.open()
-local cfg = api.config(db, db_mod)
+local flash_ok, flash_err = "", ""
+local server_id = httpd.get_param("server")
+local cfg, cfg_err = api.config(db, db_mod, server_id)
+if server_id ~= nil and not cfg then
+    layout.server_error(user, cfg_err)
+    return
+end
 
-local flash_ok  = ""
-local flash_err = ""
-
--- ── Zapis ustawień ────────────────────────────────────────────────────────
 if httpd.method() == "POST" then
     local form = httpd.parse_form(httpd.body())
-    local action = form.action or "api"
-
-    if action == "api" then
-        local fields = {
-            api_host   = form.api_host   or "localhost",
-            api_port   = form.api_port   or "8443",
-            api_scheme = form.api_scheme or "http",
-            api_key    = form.api_key    or "",
-            verify_ssl = form.verify_ssl and "1" or "0",
-        }
-        for k, v in pairs(fields) do
-            db_mod.exec(db,
-                "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                { k, v })
+    local action = form.action or ""
+    if action == "add_server" then
+        local id, err = servers.save(db, db_mod, form)
+        if id then
+            cfg = assert(api.config(db, db_mod, id, true))
+            auth.audit(db, db_mod, user, action, servers.detail(cfg))
+            httpd.redirect("/panel/settings.lhtml?server=" .. tostring(id))
+            return
         end
-        cfg = api.config(db, db_mod)
-        flash_ok = "Ustawienia API zapisane."
-        auth.audit(db, db_mod, user, "settings_api",
-            "host=" .. fields.api_host .. ":" .. fields.api_port)
+        flash_err = err
+    elseif action == "save_server" or action == "delete_server" then
+        local target, err = api.config(db, db_mod, form.server, true)
+        if not target or (server_id ~= nil and tonumber(server_id) ~= target.id) then
+            layout.server_error(user, err or "Niezgodny serwer formularza.")
+            return
+        end
+        cfg = target
+        if action == "delete_server" then
+            db_mod.exec(db, "DELETE FROM dns_servers WHERE id=?", { cfg.id })
+            auth.audit(db, db_mod, user, action, servers.detail(cfg))
+            httpd.redirect("/panel/settings.lhtml")
+            return
+        end
+        local id, save_err = servers.save(db, db_mod, form, cfg.id)
+        if id then
+            cfg = assert(api.config(db, db_mod, id, true))
+            flash_ok = "Ustawienia serwera zapisane."
+            auth.audit(db, db_mod, user, action, servers.detail(cfg))
+        else
+            flash_err = save_err
+        end
+    else
+        flash_err = "Nieznana akcja."
     end
 end
 
--- ── Test połączenia ───────────────────────────────────────────────────────
-local test_result = nil
-local h, he = api.health(cfg)
-local api_ok = (h and h.status == 200)
-if api_ok then
-    test_result = { ok = true, msg = "Połączenie OK — API odpowiada." }
-else
-    test_result = { ok = false, msg = "Brak odpowiedzi: " .. tostring(he or (h and h.raw) or "?") }
+local server_list = servers.list(db, db_mod)
+local test_result, api_ok = nil, false
+if cfg then
+    local h, err = api.health(cfg)
+    api_ok = h and h.status == 200
+    test_result = api_ok and "Połączenie OK — API odpowiada." or
+        "Brak odpowiedzi: " .. tostring(err or (h and h.raw) or "?")
 end
 %>
-<%! layout.head("Ustawienia") %>
-<%! layout.nav("settings", user, api_ok) %>
-
+<%! layout.head("Serwery DNS") %>
+<%! layout.nav("settings", user, api_ok, cfg) %>
 <div class="wrap">
-  <div class="page-title">⚙ Ustawienia panelu</div>
-
+  <div class="page-title">⚙ Serwery DNS</div>
+  <%! layout.server_selector(server_list, cfg, "/panel/settings.lhtml") %>
 <% if flash_ok ~= "" then %>
-  <div class="alert alert-ok">✓ <%= flash_ok %></div>
+  <div class="alert alert-ok"><%= flash_ok %></div>
 <% end %>
 <% if flash_err ~= "" then %>
-  <div class="alert alert-err">⚠ <%= flash_err %></div>
+  <div class="alert alert-err"><%= flash_err %></div>
 <% end %>
-
+<% if not cfg then %>
+  <div class="alert alert-info">Brak serwerów DNS. Dodaj pierwszy serwer poniżej.</div>
+<% end %>
+<%
+local forms = {}
+if cfg then forms[#forms+1] = { title = "Ustawienia serwera: " .. cfg.name, cfg = cfg } end
+forms[#forms+1] = { title = "Dodaj serwer DNS",
+    cfg = { name = "", host = "localhost", port = 8443, scheme = "http", api_key = "", verify_ssl = false } }
+for _, item in ipairs(forms) do
+    local c = item.cfg
+%>
   <div class="card">
-    <div class="card-head">🔌 Połączenie z EasyDNS API</div>
+    <div class="card-head"><%= item.title %></div>
     <div class="card-body">
-<% if test_result then %>
-      <div class="alert <%! test_result.ok and "alert-ok" or "alert-err" %>" style="margin-bottom:1rem">
-        <%! test_result.ok and "✓" or "⚠" %> <%= test_result.msg %>
-      </div>
+<% if c.id and test_result then %>
+      <div class="alert <%! api_ok and "alert-ok" or "alert-err" %>"><%= test_result %></div>
 <% end %>
       <form method="POST" action="/panel/settings.lhtml">
-        <input type="hidden" name="action" value="api">
+        <input type="hidden" name="action" value="<%! c.id and "save_server" or "add_server" %>">
+<% if c.id then %>
+        <input type="hidden" name="server" value="<%= tostring(c.id) %>">
+<% end %>
         <div class="form-grid">
+          <div class="form-row">
+            <label>Nazwa serwera</label>
+            <input name="name" value="<%= c.name %>" required>
+          </div>
           <div class="form-row">
             <label>Schemat</label>
             <select name="api_scheme">
-              <option value="http"  <%! cfg.scheme == "http"  and "selected" or "" %>>HTTP</option>
-              <option value="https" <%! cfg.scheme == "https" and "selected" or "" %>>HTTPS</option>
+              <option value="http" <%! c.scheme == "http" and "selected" or "" %>>HTTP</option>
+              <option value="https" <%! c.scheme == "https" and "selected" or "" %>>HTTPS</option>
             </select>
           </div>
           <div class="form-row">
             <label>Host / adres IP</label>
-            <input name="api_host" type="text"
-                   value="<%= httpd.escape_html(cfg.host) %>" placeholder="localhost">
+            <input name="api_host" value="<%= c.host %>" required>
           </div>
           <div class="form-row">
             <label>Port</label>
-            <input name="api_port" type="number"
-                   value="<%= tostring(cfg.port) %>" min="1" max="65535">
-          </div>
-          <div class="form-row">
-            <label>API-Key <span style="color:var(--text3)">(opcjonalnie)</span></label>
-            <input name="api_key" type="text"
-                   value="<%= httpd.escape_html(cfg.api_key) %>" placeholder="sk-...">
+            <input name="api_port" type="number" value="<%= tostring(c.port) %>" min="1" max="65535" required>
           </div>
           <div class="form-row span2">
-            <label>
-              <input name="verify_ssl" type="checkbox"
-                     <%! cfg.verify_ssl and "checked" or "" %> style="width:auto;margin-right:.4rem">
-              Weryfikuj certyfikat SSL
-            </label>
+            <label>API-Key (opcjonalnie)</label>
+            <input name="api_key" type="password" value="<%= c.api_key %>" autocomplete="off">
+          </div>
+          <div class="form-row span2">
+            <label><input name="verify_ssl" type="checkbox" <%! c.verify_ssl and "checked" or "" %>
+              style="width:auto;margin-right:.4rem">Weryfikuj certyfikat SSL</label>
             <p class="form-hint">Odznacz dla self-signed certyfikatów.</p>
           </div>
         </div>
-        <button class="btn btn-primary" type="submit">Zapisz ustawienia</button>
+        <button class="btn btn-primary" type="submit"><%! c.id and "Zapisz ustawienia" or "Dodaj serwer" %></button>
       </form>
+<% if c.id then %>
+      <form method="POST" action="/panel/settings.lhtml" style="margin-top:1rem"
+            onsubmit="return confirm('Usunąć serwer z panelu? Dane DNS nie zostaną usunięte.');">
+        <input type="hidden" name="action" value="delete_server">
+        <input type="hidden" name="server" value="<%= tostring(c.id) %>">
+        <button class="btn btn-danger" type="submit">Usuń serwer z panelu</button>
+      </form>
+<% end %>
     </div>
   </div>
-
-  <%-- INFO --%>
-  <div class="card">
-    <div class="card-head">ℹ Informacje</div>
-    <div class="card-body" style="font-size:.875rem;color:var(--text2)">
-      <p>Panel korzysta z API zdefiniowanego w
-        <code>EasyDNS/API_DOCUMENTATION.md</code>.</p>
-      <p style="margin-top:.625rem">Aktualny URL API:
-        <code><%! cfg.scheme .. "://" .. cfg.host .. ":" .. tostring(cfg.port) .. "/api/v1" %></code>
-      </p>
-    </div>
-  </div>
+<% end %>
 </div>
 <%! layout.foot() %>

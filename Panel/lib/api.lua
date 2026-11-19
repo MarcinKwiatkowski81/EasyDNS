@@ -5,19 +5,19 @@
 local M = {}
 
 -- ── Pobranie konfiguracji API z bazy ──────────────────────────────────────
-function M.config(db, dbm)
-    local rows = dbm.query(db, "SELECT key, value FROM settings")
-    local cfg = {}
-    for _, r in ipairs(rows) do
-        cfg[r.key] = r.value
+function M.config(db, dbm, server_id, required)
+    if server_id == nil and not required then
+        server_id = dbm.scalar(db, "SELECT id FROM dns_servers ORDER BY id LIMIT 1")
+        if not server_id then return nil, "Brak serwerów DNS. Dodaj serwer w ustawieniach." end
     end
-    return {
-        host       = cfg.api_host   or "localhost",
-        port       = tonumber(cfg.api_port) or 8443,
-        scheme     = cfg.api_scheme or "http",
-        api_key    = cfg.api_key    or "",
-        verify_ssl = (cfg.verify_ssl or "0") ~= "0",
-    }
+    local id = tonumber(server_id)
+    if not id or id < 1 or id % 1 ~= 0 then
+        return nil, "Nieprawidłowy identyfikator serwera DNS."
+    end
+    local cfg = dbm.query(db, "SELECT * FROM dns_servers WHERE id=?", { id })[1]
+    if not cfg then return nil, "Serwer DNS nie istnieje. Wybierz serwer ponownie." end
+    cfg.verify_ssl = tonumber(cfg.verify_ssl) == 1
+    return cfg
 end
 
 -- ── Niskopoziomowe HTTP przez luasocket ───────────────────────────────────

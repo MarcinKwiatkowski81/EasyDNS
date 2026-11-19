@@ -3,6 +3,7 @@ local db_mod = require("lib.db")
 local auth   = require("lib.auth")
 local api    = require("lib.api")
 local layout = require("lib.layout")
+local servers = require("lib.servers")
 
 -- ── Auth ──────────────────────────────────────────────────────────────────
 local sid  = httpd.get_cookie("DNSSID")
@@ -11,7 +12,9 @@ if not user then httpd.redirect("/panel/login.lhtml") return end
 
 -- ── Dane ──────────────────────────────────────────────────────────────────
 local db       = db_mod.open()
-local cfg      = api.config(db, db_mod)
+local cfg, cfg_err = api.config(db, db_mod, httpd.get_param("server"))
+if not cfg then layout.server_error(user, cfg_err) return end
+local server_list = servers.list(db, db_mod)
 local api_ok   = false
 local stats    = nil
 local zones    = nil
@@ -44,16 +47,17 @@ local audit_rows = db_mod.query(db,
     "SELECT ts, username, action, detail FROM audit_log ORDER BY id DESC LIMIT 10")
 %>
 <%! layout.head("Dashboard") %>
-<%! layout.nav("dashboard", user, api_ok) %>
+<%! layout.nav("dashboard", user, api_ok, cfg) %>
 
 <div class="wrap">
+  <%! layout.server_selector(server_list, cfg, "/panel/") %>
   <div class="page-title">📊 Dashboard
-    <small><%= cfg.scheme %>://<%= cfg.host %>:<%= tostring(cfg.port) %></small>
+    <small><%= cfg.name %> — <%= cfg.scheme %>://<%= cfg.host %>:<%= tostring(cfg.port) %></small>
   </div>
 
 <% if api_err then %>
   <div class="alert alert-err">⚠ Brak połączenia z API EasyDNS: <strong><%= api_err %></strong>
-    — sprawdź <a href="/panel/settings.lhtml">ustawienia</a>.</div>
+    — sprawdź <a href="/panel/settings.lhtml?server=<%= tostring(cfg.id) %>">ustawienia</a>.</div>
 <% end %>
 
   <%-- STAT CARDS --%>
@@ -101,7 +105,7 @@ local audit_rows = db_mod.query(db,
         <td><%= tostring(z.records_count or 0) %></td>
         <td class="mono"><%= tostring(z.max_seq or 0) %></td>
         <td><a class="btn btn-ghost btn-sm"
-               href="/panel/zones.lhtml?zone=<%= httpd.urlencode(z.name or "") %>">Zarządzaj →</a></td>
+               href="/panel/zones.lhtml?server=<%= tostring(cfg.id) %>&amp;zone=<%= httpd.urlencode(z.name or "") %>">Zarządzaj →</a></td>
       </tr>
 <%  end %>
       </tbody>

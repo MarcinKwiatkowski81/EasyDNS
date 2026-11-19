@@ -9,8 +9,9 @@ local user = sid and httpd.session_get(sid)
 if not user then httpd.redirect("/panel/login.lhtml") return end
 
 local db   = db_mod.open()
-local cfg  = api.config(db, db_mod)
-local h    = api.health(cfg)
+local cfg, cfg_err = api.config(db, db_mod, httpd.get_param("server"))
+if not cfg and httpd.get_param("server") ~= nil then layout.server_error(user, cfg_err) return end
+local h    = cfg and api.health(cfg)
 local api_ok = (h and h.status == 200)
 
 -- Sprawdź czy admin
@@ -95,7 +96,7 @@ local users = db_mod.query(db,
     "SELECT id, username, role, created_at, last_login FROM users ORDER BY id")
 %>
 <%! layout.head("Użytkownicy") %>
-<%! layout.nav("users", user, api_ok) %>
+<%! layout.nav("users", user, api_ok, cfg) %>
 
 <div class="wrap">
   <div class="page-title">👥 Użytkownicy panelu</div>
@@ -148,7 +149,7 @@ local users = db_mod.query(db,
   <div class="card">
     <div class="card-head">➕ Dodaj użytkownika</div>
     <div class="card-body">
-      <form method="POST" action="/panel/users.lhtml">
+      <form method="POST" action="/panel/users.lhtml<%= cfg and "?server=" .. tostring(cfg.id) or "" %>">
         <input type="hidden" name="action" value="add">
         <div class="form-grid">
           <div class="form-row">
@@ -179,7 +180,7 @@ local users = db_mod.query(db,
   <div class="modal">
     <h3>🔑 Zmień hasło: <span id="pass-uname"></span>
       <button class="modal-close" onclick="closeModal('pass-modal')">✕</button></h3>
-    <form method="POST" action="/panel/users.lhtml">
+    <form method="POST" action="/panel/users.lhtml<%= cfg and "?server=" .. tostring(cfg.id) or "" %>">
       <input type="hidden" name="action" value="change_pass">
       <input type="hidden" name="uid"    id="pass-uid">
       <div class="form-row">
@@ -198,7 +199,7 @@ local users = db_mod.query(db,
   <div class="modal">
     <h3>👤 Zmień rolę: <span id="role-uname"></span>
       <button class="modal-close" onclick="closeModal('role-modal')">✕</button></h3>
-    <form method="POST" action="/panel/users.lhtml">
+    <form method="POST" action="/panel/users.lhtml<%= cfg and "?server=" .. tostring(cfg.id) or "" %>">
       <input type="hidden" name="action" value="change_role">
       <input type="hidden" name="uid"    id="role-uid">
       <div class="form-row">
@@ -224,7 +225,7 @@ local users = db_mod.query(db,
     <p style="margin-bottom:1.25rem;color:var(--text2)">
       Usunąć konto <strong id="deluser-name"></strong>?
     </p>
-    <form method="POST" action="/panel/users.lhtml">
+    <form method="POST" action="/panel/users.lhtml<%= cfg and "?server=" .. tostring(cfg.id) or "" %>">
       <input type="hidden" name="action" value="delete">
       <input type="hidden" name="uid"    id="deluser-uid">
       <div class="btn-group">

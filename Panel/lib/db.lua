@@ -42,15 +42,42 @@ local function init_schema(db)
         );
     ]])
 
-    -- Domyślne ustawienia API
-    db:exec([[
+    local rc = db:exec([[
+        BEGIN IMMEDIATE;
         INSERT OR IGNORE INTO settings(key,value) VALUES
             ('api_host',    'localhost'),
             ('api_port',    '8443'),
             ('api_scheme',  'http'),
             ('api_key',     ''),
             ('verify_ssl',  '0');
+        CREATE TABLE IF NOT EXISTS dns_servers (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL,
+            host       TEXT NOT NULL,
+            port       INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+            scheme     TEXT NOT NULL CHECK(scheme IN ('http','https')),
+            api_key    TEXT NOT NULL DEFAULT '',
+            verify_ssl INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO dns_servers(name,host,port,scheme,api_key,verify_ssl)
+        SELECT 'EasyDNS', host.value, CAST(port.value AS INTEGER),
+               scheme.value, api_key.value, CAST(verify_ssl.value AS INTEGER)
+        FROM settings host, settings port, settings scheme,
+             settings api_key, settings verify_ssl
+        WHERE host.key='api_host' AND port.key='api_port'
+          AND scheme.key='api_scheme' AND api_key.key='api_key'
+          AND verify_ssl.key='verify_ssl'
+          AND NOT EXISTS (SELECT 1 FROM settings WHERE key='dns_servers_migrated');
+        INSERT OR IGNORE INTO settings(key,value) VALUES('dns_servers_migrated','1');
+        DELETE FROM settings WHERE key IN
+            ('api_host','api_port','api_scheme','api_key','verify_ssl');
+        COMMIT;
     ]])
+    if rc ~= sqlite3.OK then
+        local err = db:errmsg()
+        db:exec("ROLLBACK")
+        error("DNS server migration error: " .. tostring(err))
+    end
 
     -- Domyślny administrator (hasło: admin — SHA-256)
     -- echo -n "admin" | sha256sum → 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
