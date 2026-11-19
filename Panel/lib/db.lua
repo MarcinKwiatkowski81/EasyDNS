@@ -10,12 +10,12 @@ local function db_path()
     local dir = httpd.script_dir()
     -- script_dir() wskazuje na katalog bieżącego .lhtml / .lua
     -- baza leży w Panel/data/panel.db
-    return dir .. "../data/panel.db"
+    return dir .. "/data/panel.db"
 end
 
 -- Jednorazowa inicjalizacja schematu
 local function init_schema(db)
-    db:exec([[
+    local rc = db:exec([[
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
 
@@ -40,16 +40,7 @@ local function init_schema(db)
             action     TEXT NOT NULL,
             detail     TEXT
         );
-    ]])
 
-    local rc = db:exec([[
-        BEGIN IMMEDIATE;
-        INSERT OR IGNORE INTO settings(key,value) VALUES
-            ('api_host',    'localhost'),
-            ('api_port',    '8443'),
-            ('api_scheme',  'http'),
-            ('api_key',     ''),
-            ('verify_ssl',  '0');
         CREATE TABLE IF NOT EXISTS dns_servers (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             name       TEXT NOT NULL,
@@ -59,6 +50,19 @@ local function init_schema(db)
             api_key    TEXT NOT NULL DEFAULT '',
             verify_ssl INTEGER NOT NULL DEFAULT 0
         );
+    ]])
+    if rc ~= sqlite3.OK then
+        error("Panel schema error: " .. tostring(db:errmsg()))
+    end
+
+    rc = db:exec([[
+        BEGIN IMMEDIATE;
+        INSERT OR IGNORE INTO settings(key,value) VALUES
+            ('api_host',    'localhost'),
+            ('api_port',    '8443'),
+            ('api_scheme',  'http'),
+            ('api_key',     ''),
+            ('verify_ssl',  '0');
         INSERT INTO dns_servers(name,host,port,scheme,api_key,verify_ssl)
         SELECT 'EasyDNS', host.value, CAST(port.value AS INTEGER),
                scheme.value, api_key.value, CAST(verify_ssl.value AS INTEGER)

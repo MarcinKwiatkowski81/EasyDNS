@@ -132,7 +132,7 @@ Budowanie w katalogu repozytorium:
 sudo apt install build-essential dpkg-dev debhelper dh-python \
   python3 python3-dnslib python3-yaml
 dpkg-buildpackage -us -uc -b
-sudo apt install ../easydns_0.1.0_all.deb
+sudo apt install ../easydns_0.1.1_all.deb
 ```
 
 Pakiet instaluje i włącza `easydns.service`, a przy instalacji próbuje go
